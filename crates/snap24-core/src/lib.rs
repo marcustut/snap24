@@ -4,6 +4,10 @@
 //! Solutions are canonicalized per `docs/canonical-form.md` (version `v1`) and
 //! returned as canonical serializations; see [`solve`].
 
+mod submission;
+
+pub use submission::{evaluate, EvalError};
+
 use std::cmp::Ordering;
 use std::collections::{BTreeSet, HashMap, HashSet};
 use std::fmt;
