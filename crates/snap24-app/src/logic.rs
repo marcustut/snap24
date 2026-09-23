@@ -41,15 +41,26 @@ pub enum MergeError {
     DivideByZero,
 }
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct Snapshot {
+    cards: Vec<Rational>,
+    selected: Vec<usize>,
+    phase: Phase,
+}
+
 /// A single round: the cards currently on the board, the target, and the
 /// player's selection. The two selected cards are the operands in click order,
 /// so the player chooses which side of `-` or `/` each card lands on.
+///
+/// Every successful merge is pushed onto an undo stack (selection included), so
+/// a wrong combination can be taken back and the same two cards retried.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Round {
     pub target: Rational,
     pub cards: Vec<Rational>,
     pub selected: Vec<usize>,
     pub phase: Phase,
+    history: Vec<Snapshot>,
 }
 
 impl Round {
@@ -59,6 +70,25 @@ impl Round {
             cards: cards.into_iter().map(Rational::from).collect(),
             selected: Vec::new(),
             phase: Phase::Playing,
+            history: Vec::new(),
+        }
+    }
+
+    pub fn can_undo(&self) -> bool {
+        !self.history.is_empty()
+    }
+
+    /// Take back the last merge, restoring the cards, selection and phase it
+    /// had just before. Returns `false` if there is nothing to undo.
+    pub fn undo(&mut self) -> bool {
+        match self.history.pop() {
+            Some(snapshot) => {
+                self.cards = snapshot.cards;
+                self.selected = snapshot.selected;
+                self.phase = snapshot.phase;
+                true
+            }
+            None => false,
         }
     }
 
@@ -94,6 +124,12 @@ impl Round {
                 None => return Err(MergeError::DivideByZero),
             },
         };
+
+        self.history.push(Snapshot {
+            cards: self.cards.clone(),
+            selected: self.selected.clone(),
+            phase: self.phase,
+        });
 
         let mut indices = self.selected.clone();
         indices.sort_unstable();
@@ -239,6 +275,79 @@ mod tests {
         lose.merge(Op::Mul).unwrap(); // 30
         assert_eq!(lose.cards, vec![Rational::from(30)]);
         assert_eq!(lose.phase, Phase::Lost);
+    }
+
+    #[test]
+    fn undo_takes_back_a_wrong_merge() {
+        let mut r = round(&[9, 1, 3], 24);
+        assert!(!r.can_undo());
+        r.toggle(0);
+        r.toggle(1);
+        r.merge(Op::Add).unwrap(); // wrong: 9 + 1 = 10
+        assert!(r.can_undo());
+        assert_eq!(r.cards, vec![Rational::from(10), Rational::from(3)]);
+        assert!(r.undo());
+        assert_eq!(r.cards, vec![Rational::from(9), Rational::from(1), Rational::from(3)]);
+        // The two cards are re-selected, so the operator can be changed directly.
+        assert_eq!(r.selected, vec![0, 1]);
+        assert!(!r.can_undo());
+    }
+
+    #[test]
+    fn undo_retries_wrong_combinations_to_a_win() {
+        let mut r = round(&[9, 1, 3], 24);
+        r.toggle(0);
+        r.toggle(1);
+        r.merge(Op::Add).unwrap(); // wrong start: 10
+        r.toggle(0);
+        r.toggle(1);
+        r.merge(Op::Mul).unwrap(); // 30 -> Lost
+        assert_eq!(r.phase, Phase::Lost);
+
+        assert!(r.undo()); // back to 10, 3 with both re-selected
+        assert_eq!(r.phase, Phase::Playing);
+        assert!(r.undo()); // back to 9, 1, 3 with both re-selected
+        assert_eq!(r.cards, vec![Rational::from(9), Rational::from(1), Rational::from(3)]);
+
+        r.merge(Op::Sub).unwrap(); // (9 - 1) = 8
+        r.toggle(0);
+        r.toggle(1);
+        r.merge(Op::Mul).unwrap(); // 8 * 3 = 24 -> Won
+        assert_eq!(r.phase, Phase::Won);
+    }
+
+    #[test]
+    fn undo_unwinds_multiple_merges() {
+        let mut r = round(&[9, 1, 3], 24);
+        r.toggle(0);
+        r.toggle(1);
+        r.merge(Op::Sub).unwrap(); // 8
+        r.toggle(0);
+        r.toggle(1);
+        r.merge(Op::Mul).unwrap(); // 24 -> Won
+        assert_eq!(r.phase, Phase::Won);
+        assert!(r.undo());
+        assert_eq!(r.cards, vec![Rational::from(8), Rational::from(3)]);
+        assert_eq!(r.phase, Phase::Playing);
+        assert!(r.undo());
+        assert_eq!(r.cards, vec![Rational::from(9), Rational::from(1), Rational::from(3)]);
+        assert!(!r.can_undo());
+        assert!(!r.undo());
+    }
+
+    #[test]
+    fn selection_changes_do_not_create_undo_history() {
+        let mut r = round(&[1, 2, 3], 6);
+        r.toggle(0);
+        r.toggle(1);
+        r.toggle(0);
+        assert!(!r.can_undo());
+        // A blocked merge also must not become undoable.
+        let mut r = round(&[6, 0], 6);
+        r.toggle(0);
+        r.toggle(1);
+        assert_eq!(r.merge(Op::Div), Err(MergeError::DivideByZero));
+        assert!(!r.can_undo());
     }
 
     #[test]

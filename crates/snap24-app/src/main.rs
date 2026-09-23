@@ -82,6 +82,9 @@ struct CardButton(usize);
 struct OperatorButton(Op);
 
 #[derive(Component)]
+struct UndoButton;
+
+#[derive(Component)]
 struct NewPuzzleButton;
 
 fn main() {
@@ -100,6 +103,7 @@ fn main() {
             (
                 card_click,
                 operator_click,
+                undo_click,
                 new_puzzle,
                 rebuild_board.run_if(resource_changed::<Game>),
             )
@@ -137,6 +141,18 @@ fn operator_click(
             Err(MergeError::DivideByZero) => Some("Can't divide by zero".to_string()),
             Err(MergeError::NeedTwoCards) => Some("Pick two cards first".to_string()),
         };
+    }
+}
+
+fn undo_click(
+    mut game: ResMut<Game>,
+    interactions: Query<&Interaction, (Changed<Interaction>, With<UndoButton>)>,
+) {
+    for interaction in &interactions {
+        if *interaction == Interaction::Pressed {
+            game.round.undo();
+            game.error = None;
+        }
     }
 }
 
@@ -265,27 +281,58 @@ fn rebuild_board(mut commands: Commands, game: Res<Game>, existing: Query<Entity
             TextColor(MUTED),
         ));
 
-        ui.spawn((
-            Button,
-            NewPuzzleButton,
-            Node {
-                padding: UiRect::axes(px(24), px(12)),
-                border: UiRect::all(px(3)),
-                border_radius: BorderRadius::all(px(12)),
-                ..default()
-            },
-            BackgroundColor(Color::srgb(0.20, 0.34, 0.62)),
-            BorderColor::all(TEXT),
-        ))
-        .with_children(|button| {
-            button.spawn((
-                Text::new("New Puzzle"),
-                TextFont {
-                    font_size: FontSize::Px(24.0),
+        let undo_enabled = game.round.can_undo();
+        ui.spawn(Node {
+            flex_direction: FlexDirection::Row,
+            column_gap: px(14),
+            ..default()
+        })
+        .with_children(|row| {
+            row.spawn((
+                Button,
+                UndoButton,
+                Node {
+                    padding: UiRect::axes(px(24), px(12)),
+                    border: UiRect::all(px(3)),
+                    border_radius: BorderRadius::all(px(12)),
                     ..default()
                 },
-                TextColor(TEXT),
-            ));
+                BackgroundColor(if undo_enabled { KEY } else { BG }),
+                BorderColor::all(if undo_enabled { BORDER } else { BG }),
+            ))
+            .with_children(|button| {
+                button.spawn((
+                    Text::new("Undo"),
+                    TextFont {
+                        font_size: FontSize::Px(24.0),
+                        ..default()
+                    },
+                    TextColor(if undo_enabled { TEXT } else { MUTED }),
+                ));
+            });
+
+            row.spawn((
+                Button,
+                NewPuzzleButton,
+                Node {
+                    padding: UiRect::axes(px(24), px(12)),
+                    border: UiRect::all(px(3)),
+                    border_radius: BorderRadius::all(px(12)),
+                    ..default()
+                },
+                BackgroundColor(Color::srgb(0.20, 0.34, 0.62)),
+                BorderColor::all(TEXT),
+            ))
+            .with_children(|button| {
+                button.spawn((
+                    Text::new("New Puzzle"),
+                    TextFont {
+                        font_size: FontSize::Px(24.0),
+                        ..default()
+                    },
+                    TextColor(TEXT),
+                ));
+            });
         });
     });
 }
