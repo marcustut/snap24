@@ -51,10 +51,10 @@ impl Game {
             return error.clone();
         }
         match self.round.phase {
-            Phase::Playing => match self.round.selected.len() {
-                2 => "Now pick an operator".to_string(),
-                1 => "Pick a second card".to_string(),
-                _ => format!("{} cards left", self.round.cards.len()),
+            Phase::Playing => match (self.round.first, self.round.op) {
+                (None, _) => format!("{} cards left — pick a card", self.round.cards.len()),
+                (Some(_), None) => "Pick an operator".to_string(),
+                (Some(_), Some(_)) => "Pick the second card".to_string(),
             },
             Phase::Won => format!("Correct! You made {}.", self.round.target),
             Phase::Lost => format!(
@@ -122,8 +122,11 @@ fn card_click(
 ) {
     for (interaction, card) in &interactions {
         if *interaction == Interaction::Pressed {
-            game.round.toggle(card.0);
-            game.error = None;
+            game.error = match game.round.click_card(card.0) {
+                Ok(()) => None,
+                Err(MergeError::DivideByZero) => Some("Can't divide by zero".to_string()),
+                Err(MergeError::PickCardFirst) => Some("Pick a card first".to_string()),
+            };
         }
     }
 }
@@ -136,10 +139,10 @@ fn operator_click(
         if *interaction != Interaction::Pressed {
             continue;
         }
-        game.error = match game.round.merge(operator.0) {
+        game.error = match game.round.click_op(operator.0) {
             Ok(()) => None,
             Err(MergeError::DivideByZero) => Some("Can't divide by zero".to_string()),
-            Err(MergeError::NeedTwoCards) => Some("Pick two cards first".to_string()),
+            Err(MergeError::PickCardFirst) => Some("Pick a card first".to_string()),
         };
     }
 }
@@ -208,7 +211,7 @@ fn rebuild_board(mut commands: Commands, game: Res<Game>, existing: Query<Entity
         })
         .with_children(|row| {
             for (index, label) in game.round.card_labels().iter().enumerate() {
-                let selected = game.round.is_selected(index);
+                let selected = game.round.is_first(index);
                 row.spawn((
                     Button,
                     CardButton(index),
@@ -244,6 +247,7 @@ fn rebuild_board(mut commands: Commands, game: Res<Game>, existing: Query<Entity
         })
         .with_children(|row| {
             for operator in Op::ALL {
+                let pending = game.round.op == Some(operator);
                 row.spawn((
                     Button,
                     OperatorButton(operator),
@@ -256,8 +260,8 @@ fn rebuild_board(mut commands: Commands, game: Res<Game>, existing: Query<Entity
                         border_radius: BorderRadius::all(px(12)),
                         ..default()
                     },
-                    BackgroundColor(KEY),
-                    BorderColor::all(BORDER),
+                    BackgroundColor(if pending { CARD_SELECTED } else { KEY }),
+                    BorderColor::all(if pending { TEXT } else { BORDER }),
                 ))
                 .with_children(|key| {
                     key.spawn((
