@@ -12,6 +12,9 @@
 
 mod logic;
 
+#[cfg(feature = "devtools")]
+mod devtools;
+
 use bevy::prelude::*;
 use logic::{round_score, MergeError, Op, Phase, Round, ViewPhase};
 use snap24_core::{generate, Difficulty, Mode, Rng};
@@ -58,7 +61,7 @@ impl Game {
     fn new() -> Self {
         Game {
             round: Round::new(Vec::new(), 0i64.into()),
-            rng: Rng::new(seed_from_time()),
+            rng: Rng::new(initial_seed()),
             mode: Mode::Classic,
             difficulty: Difficulty::Easy,
             error: None,
@@ -68,6 +71,29 @@ impl Game {
             last_score: None,
             total_score: 0,
         }
+    }
+
+    /// Handle a card tap. Shared by the click system and the devtools harness.
+    fn play_card(&mut self, index: usize) {
+        self.error = match self.round.click_card(index) {
+            Ok(()) => None,
+            Err(MergeError::DivideByZero) => Some("Can't divide by zero".to_string()),
+            Err(MergeError::PickCardFirst) => Some("Pick a card first".to_string()),
+        };
+    }
+
+    /// Handle an operator tap.
+    fn play_op(&mut self, op: Op) {
+        self.error = match self.round.click_op(op) {
+            Ok(()) => None,
+            Err(MergeError::DivideByZero) => Some("Can't divide by zero".to_string()),
+            Err(MergeError::PickCardFirst) => Some("Pick a card first".to_string()),
+        };
+    }
+
+    fn undo(&mut self) {
+        self.round.undo();
+        self.error = None;
     }
 
     fn status(&self) -> String {
@@ -133,7 +159,14 @@ fn deal(game: &mut Game, timer: &mut ViewTimer, now: f32) {
     game.last_score = None;
 }
 
-fn seed_from_time() -> u64 {
+fn initial_seed() -> u64 {
+    #[cfg(feature = "devtools")]
+    if let Some(seed) = std::env::var("SNAP24_SEED")
+        .ok()
+        .and_then(|value| value.parse().ok())
+    {
+        return seed;
+    }
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .map(|d| d.as_nanos() as u64)
@@ -175,51 +208,55 @@ struct UndoButton;
 struct NewPuzzleButton;
 
 fn main() {
-    App::new()
-        .add_plugins(DefaultPlugins.set(WindowPlugin {
-            primary_window: Some(Window {
-                title: "Snap 24".to_string(),
-                ..default()
-            }),
+    let mut app = App::new();
+    app.add_plugins(DefaultPlugins.set(WindowPlugin {
+        primary_window: Some(Window {
+            title: "Snap 24".to_string(),
             ..default()
-        }))
-        .init_state::<Screen>()
-        .insert_resource(Game::new())
-        .init_resource::<ViewTimer>()
-        .add_systems(Startup, setup)
-        .add_systems(OnEnter(Screen::Title), spawn_title)
-        .add_systems(OnEnter(Screen::ModeSelect), spawn_mode_select)
-        .add_systems(OnEnter(Screen::DifficultySelect), spawn_difficulty_select)
-        .add_systems(OnEnter(Screen::Playing), spawn_board)
-        .add_systems(OnExit(Screen::Title), cleanup_screen)
-        .add_systems(OnExit(Screen::ModeSelect), cleanup_screen)
-        .add_systems(OnExit(Screen::DifficultySelect), cleanup_screen)
-        .add_systems(OnExit(Screen::Playing), cleanup_screen)
-        .add_systems(
-            Update,
-            (
-                play_button,
-                mode_buttons,
-                difficulty_buttons,
-                back_buttons,
-            ),
+        }),
+        ..default()
+    }))
+    .init_state::<Screen>()
+    .insert_resource(Game::new())
+    .init_resource::<ViewTimer>()
+    .add_systems(Startup, setup)
+    .add_systems(OnEnter(Screen::Title), spawn_title)
+    .add_systems(OnEnter(Screen::ModeSelect), spawn_mode_select)
+    .add_systems(OnEnter(Screen::DifficultySelect), spawn_difficulty_select)
+        .add_systems(OnEnter(Screen::Playing), (spawn_board, update_board).chain())
+    .add_systems(OnExit(Screen::Title), cleanup_screen)
+    .add_systems(OnExit(Screen::ModeSelect), cleanup_screen)
+    .add_systems(OnExit(Screen::DifficultySelect), cleanup_screen)
+    .add_systems(OnExit(Screen::Playing), cleanup_screen)
+    .add_systems(
+        Update,
+        (
+            play_button,
+            mode_buttons,
+            difficulty_buttons,
+            back_buttons,
+        ),
+    )
+    .add_systems(
+        Update,
+        (
+            tick_view,
+            card_click,
+            operator_click,
+            undo_click,
+            new_puzzle,
+            settle_round,
+            update_board.run_if(resource_changed::<Game>),
+            update_countdown,
         )
-        .add_systems(
-            Update,
-            (
-                tick_view,
-                card_click,
-                operator_click,
-                undo_click,
-                new_puzzle,
-                settle_round,
-                update_board.run_if(resource_changed::<Game>),
-                update_countdown,
-            )
-                .chain()
-                .run_if(in_state(Screen::Playing)),
-        )
-        .run();
+            .chain()
+            .run_if(in_state(Screen::Playing)),
+    );
+
+    #[cfg(feature = "devtools")]
+    app.add_plugins(devtools::DevtoolsPlugin);
+
+    app.run();
 }
 
 fn setup(mut commands: Commands) {
@@ -584,11 +621,7 @@ fn card_click(
 ) {
     for (interaction, card) in &interactions {
         if *interaction == Interaction::Pressed {
-            game.error = match game.round.click_card(card.0) {
-                Ok(()) => None,
-                Err(MergeError::DivideByZero) => Some("Can't divide by zero".to_string()),
-                Err(MergeError::PickCardFirst) => Some("Pick a card first".to_string()),
-            };
+            game.play_card(card.0);
         }
     }
 }
@@ -598,14 +631,9 @@ fn operator_click(
     interactions: Query<(&Interaction, &OperatorButton), Changed<Interaction>>,
 ) {
     for (interaction, operator) in &interactions {
-        if *interaction != Interaction::Pressed {
-            continue;
+        if *interaction == Interaction::Pressed {
+            game.play_op(operator.0);
         }
-        game.error = match game.round.click_op(operator.0) {
-            Ok(()) => None,
-            Err(MergeError::DivideByZero) => Some("Can't divide by zero".to_string()),
-            Err(MergeError::PickCardFirst) => Some("Pick a card first".to_string()),
-        };
     }
 }
 
@@ -614,8 +642,7 @@ fn undo_click(
     interactions: Query<&Interaction, (Changed<Interaction>, With<UndoButton>)>,
 ) {
     if pressed(&interactions) {
-        game.round.undo();
-        game.error = None;
+        game.undo();
     }
 }
 
@@ -632,13 +659,16 @@ fn new_puzzle(
 
 fn update_board(
     game: Res<Game>,
-    ui: Res<BoardUi>,
+    ui: Option<Res<BoardUi>>,
     mut texts: Query<&mut Text>,
     mut text_colors: Query<&mut TextColor>,
     mut backgrounds: Query<&mut BackgroundColor>,
     mut borders: Query<&mut BorderColor>,
     mut visibilities: Query<&mut Visibility>,
 ) {
+    let Some(ui) = ui else {
+        return;
+    };
     set_text(
         &mut texts,
         ui.target,
