@@ -184,9 +184,12 @@ pub fn generate(mode: Mode, difficulty: Difficulty, rng: &mut Rng) -> Puzzle {
         },
         Mode::Custom => loop {
             let cards = rng.deal(difficulty.card_count());
-            let values = reachable(&cards);
-            let candidates: Vec<Rational> =
-                values.into_iter().filter(|v| !is_trivial(*v, &cards)).collect();
+            // Custom targets are whole positive numbers, so they are easy to
+            // read and type; fractions stay available for the solver/reveal.
+            let candidates: Vec<Rational> = reachable(&cards)
+                .into_iter()
+                .filter(|value| value.is_integer() && value.is_positive() && !is_trivial(*value, &cards))
+                .collect();
             if !candidates.is_empty() {
                 let target = candidates[rng.below(candidates.len())];
                 return Puzzle {
@@ -198,6 +201,36 @@ pub fn generate(mode: Mode, difficulty: Difficulty, rng: &mut Rng) -> Puzzle {
             }
         },
     }
+}
+
+/// Deal a puzzle that can reach a caller-chosen `target`.
+///
+/// Used by Custom mode when the player types their own target. Retries hands
+/// until the target is reachable; if no hand works within a generous cap (the
+/// target may be impossible for this card count) it falls back to a random
+/// solvable puzzle so play never stalls.
+pub fn generate_targeted(
+    mode: Mode,
+    difficulty: Difficulty,
+    target: Rational,
+    rng: &mut Rng,
+) -> Puzzle {
+    let count = match mode {
+        Mode::Classic => 5,
+        Mode::Custom => difficulty.card_count(),
+    };
+    for _ in 0..20_000 {
+        let cards = rng.deal(count);
+        if reachable(&cards).contains(&target) {
+            return Puzzle {
+                mode,
+                difficulty,
+                cards,
+                target,
+            };
+        }
+    }
+    generate(mode, difficulty, rng)
 }
 
 #[cfg(test)]
@@ -257,7 +290,40 @@ mod tests {
                     puzzle.cards
                 );
                 assert!(!is_trivial(puzzle.target, &puzzle.cards));
+                assert!(puzzle.target.is_integer(), "random target is a fraction");
+                assert!(puzzle.target.is_positive(), "random target is not positive");
             }
+        }
+    }
+
+    #[test]
+    fn custom_random_targets_are_whole_positive_numbers() {
+        for difficulty in Difficulty::ALL {
+            for seed in 0..40 {
+                let mut rng = Rng::new(seed * 7 + 1);
+                let target = generate(Mode::Custom, difficulty, &mut rng).target;
+                assert!(target.is_integer(), "{difficulty:?} dealt {target}");
+                assert!(target.is_positive(), "{difficulty:?} dealt {target}");
+            }
+        }
+    }
+
+    #[test]
+    fn targeted_generation_reaches_the_requested_target() {
+        for target in [24i64, 100, 7, 500] {
+            let mut rng = Rng::new(target as u64 * 13 + 5);
+            let puzzle = generate_targeted(
+                Mode::Custom,
+                Difficulty::Hard,
+                Rational::from(target),
+                &mut rng,
+            );
+            assert_eq!(puzzle.target, Rational::from(target));
+            assert!(
+                reachable(&puzzle.cards).contains(&Rational::from(target)),
+                "target {target} not reachable for {:?}",
+                puzzle.cards
+            );
         }
     }
 

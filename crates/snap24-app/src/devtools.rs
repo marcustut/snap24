@@ -20,7 +20,7 @@
 //! reproducible deal.
 
 use crate::logic::Op;
-use crate::{deal, Game, Screen, ViewTimer};
+use crate::{deal, deal_custom, Game, Screen, TargetEntry, ViewTimer};
 use bevy::prelude::*;
 use bevy::render::view::screenshot::{save_to_disk, Screenshot};
 use snap24_core::{Difficulty, Mode};
@@ -69,6 +69,8 @@ enum Step {
     New,
     Menu,
     Back,
+    Target(Option<i64>),
+    Start,
     Wait(u32),
     Shot(String),
 }
@@ -104,6 +106,9 @@ fn parse(script: &str) -> Vec<Step> {
             })),
             ("undo", _) => steps.push(Step::Undo),
             ("new", _) => steps.push(Step::New),
+            ("target", Some("random")) => steps.push(Step::Target(None)),
+            ("target", Some(value)) => steps.push(Step::Target(value.parse().ok())),
+            ("start", _) => steps.push(Step::Start),
             ("menu", _) => steps.push(Step::Menu),
             ("back", _) => steps.push(Step::Back),
             ("wait", Some(value)) => steps.push(Step::Wait(value.parse().unwrap_or(1))),
@@ -121,6 +126,7 @@ fn run_script(
     screen: Res<State<Screen>>,
     mut game: ResMut<Game>,
     mut timer: ResMut<ViewTimer>,
+    mut entry: ResMut<TargetEntry>,
     time: Res<Time>,
     mut next: ResMut<NextState<Screen>>,
     mut exit: MessageWriter<AppExit>,
@@ -155,17 +161,40 @@ fn run_script(
         }
         Step::Difficulty(difficulty) => {
             game.difficulty = difficulty;
-            deal(&mut game, &mut timer, time.elapsed_secs());
-            next.set(Screen::Playing);
+            if game.mode == Mode::Custom {
+                next.set(Screen::TargetSelect);
+            } else {
+                deal(&mut game, &mut timer, time.elapsed_secs());
+                next.set(Screen::Playing);
+            }
         }
         Step::Card(index) => game.play_card(index),
         Step::Op(op) => game.play_op(op),
         Step::Undo => game.undo(),
         Step::New => deal(&mut game, &mut timer, time.elapsed_secs()),
         Step::Menu => next.set(Screen::ModeSelect),
+        Step::Target(value) => {
+            entry.clear();
+            if let Some(value) = value {
+                for digit in value.to_string().chars() {
+                    if let Some(digit) = digit.to_digit(10) {
+                        entry.push(digit);
+                    }
+                }
+            }
+        }
+        Step::Start => {
+            if game.mode == Mode::Custom {
+                deal_custom(&mut game, &mut timer, time.elapsed_secs(), &entry);
+            } else {
+                deal(&mut game, &mut timer, time.elapsed_secs());
+            }
+            next.set(Screen::Playing);
+        }
         Step::Back => next.set(match screen.get() {
             Screen::ModeSelect => Screen::Title,
             Screen::DifficultySelect => Screen::ModeSelect,
+            Screen::TargetSelect => Screen::DifficultySelect,
             Screen::Playing => Screen::ModeSelect,
             Screen::Title => Screen::Title,
         }),

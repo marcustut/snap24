@@ -13,7 +13,7 @@
 - [x] `cargo test` green.
 
 **Notes (decided here — these are the tunable game-design numbers):**
-`generate(mode, difficulty, rng) -> Puzzle` in `crates/snap24-core/src/generator.rs` with `Mode`, `Difficulty`, `Puzzle`, and a dependency-free seeded `Rng` (xorshift64*). Classic retries the deal until 24 is reachable; Custom samples a target from the hand's reachable set minus "trivial" values (defined as `0`, `1`, a dealt card, or the plain sum/product of all cards) and retries if none remain.
+`generate(mode, difficulty, rng) -> Puzzle` in `crates/snap24-core/src/generator.rs` with `Mode`, `Difficulty`, `Puzzle`, and a dependency-free seeded `Rng` (xorshift64*). Classic retries the deal until 24 is reachable; Custom samples a target from the hand's reachable set minus "trivial" values (defined as `0`, `1`, a dealt card, or the plain sum/product of all cards) and retries if none remain. **Custom random targets are whole positive integers** (`is_integer() && is_positive()`), so they are readable/typable; fractions remain for the solver and reveal. `generate_targeted(mode, difficulty, target, rng)` deals a hand that reaches a player-chosen target (retrying up to 20 000 hands; falls back to `generate` if the target is impossible for the card count, so it never hangs).
 
 Ladder (view = seconds visible before flipping face-down; `None` = indefinitely, `Some(0)` = never shown):
 

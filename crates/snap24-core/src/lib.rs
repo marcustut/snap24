@@ -7,7 +7,7 @@
 mod generator;
 mod submission;
 
-pub use generator::{generate, Difficulty, Mode, Puzzle, Rng};
+pub use generator::{generate, generate_targeted, Difficulty, Mode, Puzzle, Rng};
 pub use submission::{evaluate, EvalError};
 
 use std::cmp::Ordering;
@@ -90,6 +90,14 @@ impl Rational {
 
     pub fn is_zero(self) -> bool {
         self.num == 0
+    }
+
+    pub fn is_integer(self) -> bool {
+        self.den == 1
+    }
+
+    pub fn is_positive(self) -> bool {
+        self.num > 0
     }
 }
 

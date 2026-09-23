@@ -17,7 +17,7 @@ mod devtools;
 
 use bevy::prelude::*;
 use logic::{round_score, MergeError, Op, Phase, Round, ViewPhase};
-use snap24_core::{generate, Difficulty, Mode, Rng};
+use snap24_core::{generate, generate_targeted, Difficulty, Mode, Puzzle, Rational, Rng};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 const BG: Color = Color::srgb(0.07, 0.08, 0.11);
@@ -33,14 +33,46 @@ const TIMER: Color = Color::srgb(0.98, 0.75, 0.35);
 /// are spawned up front and hidden when unused.
 const MAX_CARDS: usize = 5;
 
-/// Screen flow: Title → Mode → Difficulty → Play.
+/// Screen flow: Title → Mode → Difficulty → (Custom target) → Play.
 #[derive(States, Default, Debug, Clone, PartialEq, Eq, Hash)]
 enum Screen {
     #[default]
     Title,
     ModeSelect,
     DifficultySelect,
+    /// Custom only: random target, or type your own.
+    TargetSelect,
     Playing,
+}
+
+/// The target the player is typing on the Custom target screen. Empty digits
+/// means "random".
+#[derive(Resource, Default)]
+struct TargetEntry {
+    digits: String,
+}
+
+impl TargetEntry {
+    fn push(&mut self, digit: u32) {
+        if self.digits.len() < 4 {
+            self.digits.push(char::from_digit(digit, 10).unwrap());
+        }
+    }
+
+    fn clear(&mut self) {
+        self.digits.clear();
+    }
+
+    fn value(&self) -> Option<i64> {
+        self.digits.parse().ok()
+    }
+
+    fn label(&self) -> String {
+        match self.value() {
+            Some(value) => format!("Target: {value}"),
+            None => "Target: Random".to_string(),
+        }
+    }
 }
 
 #[derive(Resource)]
@@ -145,8 +177,7 @@ struct BoardUi {
     operators: [Entity; 4],
 }
 
-fn deal(game: &mut Game, timer: &mut ViewTimer, now: f32) {
-    let puzzle = generate(game.mode, game.difficulty, &mut game.rng);
+fn start_puzzle(game: &mut Game, timer: &mut ViewTimer, now: f32, puzzle: Puzzle) {
     game.round = Round::new(puzzle.cards, puzzle.target);
     timer.phase = ViewPhase::from_view_seconds(game.difficulty.view_seconds());
     if timer.phase == ViewPhase::Hidden {
@@ -157,6 +188,25 @@ fn deal(game: &mut Game, timer: &mut ViewTimer, now: f32) {
     game.started_at = now;
     game.settled = false;
     game.last_score = None;
+}
+
+fn deal(game: &mut Game, timer: &mut ViewTimer, now: f32) {
+    let puzzle = generate(game.mode, game.difficulty, &mut game.rng);
+    start_puzzle(game, timer, now, puzzle);
+}
+
+/// Custom start: use the typed target if there is one, otherwise random.
+fn deal_custom(game: &mut Game, timer: &mut ViewTimer, now: f32, entry: &TargetEntry) {
+    let puzzle = match entry.value() {
+        Some(target) => generate_targeted(
+            Mode::Custom,
+            game.difficulty,
+            Rational::from(target),
+            &mut game.rng,
+        ),
+        None => generate(Mode::Custom, game.difficulty, &mut game.rng),
+    };
+    start_puzzle(game, timer, now, puzzle);
 }
 
 fn initial_seed() -> u64 {
@@ -207,6 +257,18 @@ struct UndoButton;
 #[derive(Component)]
 struct NewPuzzleButton;
 
+#[derive(Component)]
+struct DigitButton(u32);
+
+#[derive(Component)]
+struct RandomTargetButton;
+
+#[derive(Component)]
+struct StartButton;
+
+#[derive(Component)]
+struct TargetLabel;
+
 fn main() {
     let mut app = App::new();
     app.add_plugins(DefaultPlugins.set(WindowPlugin {
@@ -216,27 +278,34 @@ fn main() {
         }),
         ..default()
     }))
-    .init_state::<Screen>()
-    .insert_resource(Game::new())
-    .init_resource::<ViewTimer>()
-    .add_systems(Startup, setup)
-    .add_systems(OnEnter(Screen::Title), spawn_title)
-    .add_systems(OnEnter(Screen::ModeSelect), spawn_mode_select)
-    .add_systems(OnEnter(Screen::DifficultySelect), spawn_difficulty_select)
+        .init_state::<Screen>()
+        .insert_resource(Game::new())
+        .init_resource::<ViewTimer>()
+        .init_resource::<TargetEntry>()
+        .add_systems(Startup, setup)
+        .add_systems(OnEnter(Screen::Title), spawn_title)
+        .add_systems(OnEnter(Screen::ModeSelect), spawn_mode_select)
+        .add_systems(OnEnter(Screen::DifficultySelect), spawn_difficulty_select)
+        .add_systems(OnEnter(Screen::TargetSelect), spawn_target_select)
         .add_systems(OnEnter(Screen::Playing), (spawn_board, update_board).chain())
-    .add_systems(OnExit(Screen::Title), cleanup_screen)
-    .add_systems(OnExit(Screen::ModeSelect), cleanup_screen)
-    .add_systems(OnExit(Screen::DifficultySelect), cleanup_screen)
-    .add_systems(OnExit(Screen::Playing), cleanup_screen)
-    .add_systems(
-        Update,
-        (
-            play_button,
-            mode_buttons,
-            difficulty_buttons,
-            back_buttons,
-        ),
-    )
+        .add_systems(OnExit(Screen::Title), cleanup_screen)
+        .add_systems(OnExit(Screen::ModeSelect), cleanup_screen)
+        .add_systems(OnExit(Screen::DifficultySelect), cleanup_screen)
+        .add_systems(OnExit(Screen::TargetSelect), cleanup_screen)
+        .add_systems(OnExit(Screen::Playing), cleanup_screen)
+        .add_systems(
+            Update,
+            (
+                play_button,
+                mode_buttons,
+                difficulty_buttons,
+                digit_buttons,
+                random_target_button,
+                start_button,
+                update_target_display,
+                back_buttons,
+            ),
+        )
     .add_systems(
         Update,
         (
@@ -293,15 +362,19 @@ fn root(commands: &mut Commands) -> Entity {
 }
 
 fn button<M: Bundle>(parent: &mut ChildSpawnerCommands, label: &str, marker: M) {
+    button_width(parent, label, marker, 180.0);
+}
+
+fn button_width<M: Bundle>(parent: &mut ChildSpawnerCommands, label: &str, marker: M, min_width: f32) {
     parent
         .spawn((
             Button,
             marker,
             Node {
-                padding: UiRect::axes(px(28), px(14)),
+                padding: UiRect::axes(px(20), px(14)),
                 border: UiRect::all(px(3)),
                 border_radius: BorderRadius::all(px(12)),
-                min_width: px(180),
+                min_width: px(min_width),
                 justify_content: JustifyContent::Center,
                 ..default()
             },
@@ -360,6 +433,53 @@ fn spawn_difficulty_select(mut commands: Commands) {
             button(ui, difficulty.label(), DifficultyButton(difficulty));
         }
         button(ui, "Back", BackButton);
+    });
+}
+
+fn spawn_target_select(mut commands: Commands) {
+    let root = root(&mut commands);
+    commands.entity(root).with_children(|ui| {
+        heading(ui, "Custom target", 40.0);
+        ui.spawn((
+            TargetLabel,
+            Text::new(""),
+            TextFont {
+                font_size: FontSize::Px(30.0),
+                ..default()
+            },
+            TextColor(TEXT),
+        ));
+        heading(ui, "Type a number, or Random", 20.0);
+        for row in [[7, 8, 9], [4, 5, 6], [1, 2, 3]] {
+            ui.spawn(Node {
+                flex_direction: FlexDirection::Row,
+                column_gap: px(12),
+                ..default()
+            })
+            .with_children(|row_ui| {
+                for digit in row {
+                    button_width(row_ui, &digit.to_string(), DigitButton(digit), 72.0);
+                }
+            });
+        }
+        ui.spawn(Node {
+            flex_direction: FlexDirection::Row,
+            column_gap: px(12),
+            ..default()
+        })
+        .with_children(|row_ui| {
+            button_width(row_ui, "0", DigitButton(0), 72.0);
+            button(row_ui, "Random", RandomTargetButton);
+        });
+        ui.spawn(Node {
+            flex_direction: FlexDirection::Row,
+            column_gap: px(12),
+            ..default()
+        })
+        .with_children(|row_ui| {
+            button(row_ui, "Start", StartButton);
+            button(row_ui, "Back", BackButton);
+        });
     });
 }
 
@@ -559,9 +679,53 @@ fn difficulty_buttons(
     for (interaction, difficulty) in &interactions {
         if *interaction == Interaction::Pressed {
             game.difficulty = difficulty.0;
-            deal(&mut game, &mut timer, time.elapsed_secs());
-            next.set(Screen::Playing);
+            if game.mode == Mode::Custom {
+                next.set(Screen::TargetSelect);
+            } else {
+                deal(&mut game, &mut timer, time.elapsed_secs());
+                next.set(Screen::Playing);
+            }
         }
+    }
+}
+
+fn digit_buttons(
+    interactions: Query<(&Interaction, &DigitButton), Changed<Interaction>>,
+    mut entry: ResMut<TargetEntry>,
+) {
+    for (interaction, digit) in &interactions {
+        if *interaction == Interaction::Pressed {
+            entry.push(digit.0);
+        }
+    }
+}
+
+fn random_target_button(
+    interactions: Query<&Interaction, (Changed<Interaction>, With<RandomTargetButton>)>,
+    mut entry: ResMut<TargetEntry>,
+) {
+    if pressed(&interactions) {
+        entry.clear();
+    }
+}
+
+fn start_button(
+    interactions: Query<&Interaction, (Changed<Interaction>, With<StartButton>)>,
+    mut game: ResMut<Game>,
+    mut timer: ResMut<ViewTimer>,
+    entry: Res<TargetEntry>,
+    time: Res<Time>,
+    mut next: ResMut<NextState<Screen>>,
+) {
+    if pressed(&interactions) {
+        deal_custom(&mut game, &mut timer, time.elapsed_secs(), &entry);
+        next.set(Screen::Playing);
+    }
+}
+
+fn update_target_display(entry: Res<TargetEntry>, mut labels: Query<&mut Text, With<TargetLabel>>) {
+    for mut label in &mut labels {
+        **label = entry.label();
     }
 }
 
@@ -576,6 +740,7 @@ fn back_buttons(
     next.set(match screen.get() {
         Screen::ModeSelect => Screen::Title,
         Screen::DifficultySelect => Screen::ModeSelect,
+        Screen::TargetSelect => Screen::DifficultySelect,
         Screen::Playing => Screen::ModeSelect,
         Screen::Title => Screen::Title,
     });
@@ -664,7 +829,7 @@ fn update_board(
     mut text_colors: Query<&mut TextColor>,
     mut backgrounds: Query<&mut BackgroundColor>,
     mut borders: Query<&mut BorderColor>,
-    mut visibilities: Query<&mut Visibility>,
+    mut nodes: Query<&mut Node>,
 ) {
     let Some(ui) = ui else {
         return;
@@ -692,7 +857,9 @@ fn update_board(
     let labels = game.round.card_labels();
     for (index, &slot) in ui.cards.iter().enumerate() {
         if index < labels.len() {
-            set_visibility(&mut visibilities, slot, Visibility::Inherited);
+            // `Display::None` removes the slot from layout, so the remaining
+            // cards stay centred as the hand shrinks.
+            set_display(&mut nodes, slot, Display::Flex);
             let shown = if game.round.is_revealed(index) {
                 labels[index].clone()
             } else {
@@ -708,7 +875,7 @@ fn update_board(
                 *border = BorderColor::all(if selected { TEXT } else { BORDER });
             }
         } else {
-            set_visibility(&mut visibilities, slot, Visibility::Hidden);
+            set_display(&mut nodes, slot, Display::None);
         }
     }
 
@@ -749,12 +916,8 @@ fn set_text(texts: &mut Query<&mut Text>, entity: Entity, value: String) {
     }
 }
 
-fn set_visibility(
-    visibilities: &mut Query<&mut Visibility>,
-    entity: Entity,
-    value: Visibility,
-) {
-    if let Ok(mut visibility) = visibilities.get_mut(entity) {
-        *visibility = value;
+fn set_display(nodes: &mut Query<&mut Node>, entity: Entity, value: Display) {
+    if let Ok(mut node) = nodes.get_mut(entity) {
+        node.display = value;
     }
 }
