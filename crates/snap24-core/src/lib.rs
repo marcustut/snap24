@@ -4,8 +4,10 @@
 //! Solutions are canonicalized per `docs/canonical-form.md` (version `v1`) and
 //! returned as canonical serializations; see [`solve`].
 
+mod generator;
 mod submission;
 
+pub use generator::{generate, Difficulty, Mode, Puzzle, Rng};
 pub use submission::{evaluate, EvalError};
 
 use std::cmp::Ordering;
