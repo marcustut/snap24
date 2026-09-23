@@ -1,12 +1,14 @@
-//! Snap 24 desktop app — the playable core loop.
+//! Snap 24 desktop app — playable core loop with mode/difficulty flow and
+//! scoring.
 //!
-//! Bevy owns rendering and input; [`logic::Round`] owns the rules. The board is
-//! rebuilt from the round whenever the [`Game`] resource changes.
+//! Bevy owns rendering, input and the screen flow; [`logic::Round`] owns the
+//! rules and [`logic::round_score`] the scoring. The board is rebuilt from the
+//! [`Game`] resource whenever it changes.
 
 mod logic;
 
 use bevy::prelude::*;
-use logic::{MergeError, Op, Phase, Round, ViewPhase};
+use logic::{round_score, MergeError, Op, Phase, Round, ViewPhase};
 use snap24_core::{generate, Difficulty, Mode, Rng};
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -18,6 +20,16 @@ const BORDER: Color = Color::srgb(0.30, 0.34, 0.42);
 const TEXT: Color = Color::srgb(0.93, 0.95, 0.98);
 const MUTED: Color = Color::srgb(0.72, 0.76, 0.84);
 
+/// Screen flow: Title → Mode → Difficulty → Play.
+#[derive(States, Default, Debug, Clone, PartialEq, Eq, Hash)]
+enum Screen {
+    #[default]
+    Title,
+    ModeSelect,
+    DifficultySelect,
+    Playing,
+}
+
 #[derive(Resource)]
 struct Game {
     round: Round,
@@ -25,6 +37,11 @@ struct Game {
     mode: Mode,
     difficulty: Difficulty,
     error: Option<String>,
+    hints_used: u32,
+    started_at: f32,
+    settled: bool,
+    last_score: Option<i32>,
+    total_score: i32,
 }
 
 impl Game {
@@ -35,6 +52,11 @@ impl Game {
             mode: Mode::Classic,
             difficulty: Difficulty::Easy,
             error: None,
+            hints_used: 0,
+            started_at: 0.0,
+            settled: false,
+            last_score: None,
+            total_score: 0,
         }
     }
 
@@ -72,7 +94,7 @@ impl Default for ViewTimer {
     }
 }
 
-fn deal(game: &mut Game, timer: &mut ViewTimer) {
+fn deal(game: &mut Game, timer: &mut ViewTimer, now: f32) {
     let puzzle = generate(game.mode, game.difficulty, &mut game.rng);
     game.round = Round::new(puzzle.cards, puzzle.target);
     timer.phase = ViewPhase::from_view_seconds(game.difficulty.view_seconds());
@@ -80,17 +102,10 @@ fn deal(game: &mut Game, timer: &mut ViewTimer) {
         game.round.conceal();
     }
     game.error = None;
-}
-
-fn difficulty_name(difficulty: Difficulty) -> &'static str {
-    match difficulty {
-        Difficulty::Easy => "Easy",
-        Difficulty::Medium => "Medium",
-        Difficulty::Hard => "Hard",
-        Difficulty::Expert => "Expert",
-        Difficulty::Insane => "Insane",
-        Difficulty::Blind => "Blind",
-    }
+    game.hints_used = 0;
+    game.started_at = now;
+    game.settled = false;
+    game.last_score = None;
 }
 
 fn seed_from_time() -> u64 {
@@ -100,8 +115,27 @@ fn seed_from_time() -> u64 {
         .unwrap_or(0x5EED)
 }
 
+// --------------------------------------------------------------------------- //
+// components                                                                   //
+// --------------------------------------------------------------------------- //
+
+#[derive(Component)]
+struct ScreenRoot;
+
 #[derive(Component)]
 struct Board;
+
+#[derive(Component)]
+struct PlayButton;
+
+#[derive(Component)]
+struct ModeButton(Mode);
+
+#[derive(Component)]
+struct DifficultyButton(Difficulty);
+
+#[derive(Component)]
+struct BackButton;
 
 #[derive(Component)]
 struct CardButton(usize);
@@ -127,30 +161,211 @@ fn main() {
             }),
             ..default()
         }))
+        .init_state::<Screen>()
         .insert_resource(Game::new())
         .init_resource::<ViewTimer>()
         .add_systems(Startup, setup)
+        .add_systems(OnEnter(Screen::Title), spawn_title)
+        .add_systems(OnEnter(Screen::ModeSelect), spawn_mode_select)
+        .add_systems(OnEnter(Screen::DifficultySelect), spawn_difficulty_select)
+        .add_systems(OnExit(Screen::Title), cleanup_screen)
+        .add_systems(OnExit(Screen::ModeSelect), cleanup_screen)
+        .add_systems(OnExit(Screen::DifficultySelect), cleanup_screen)
+        .add_systems(OnExit(Screen::Playing), cleanup_screen)
+        .add_systems(
+            Update,
+            (
+                play_button,
+                mode_buttons,
+                difficulty_buttons,
+                back_buttons,
+            ),
+        )
         .add_systems(
             Update,
             (
                 tick_view,
-                tier_keys,
                 card_click,
                 operator_click,
                 undo_click,
                 new_puzzle,
+                settle_round,
                 rebuild_board.run_if(resource_changed::<Game>),
                 update_countdown,
             )
-                .chain(),
+                .chain()
+                .run_if(in_state(Screen::Playing)),
         )
         .run();
 }
 
-fn setup(mut commands: Commands, mut game: ResMut<Game>, mut timer: ResMut<ViewTimer>) {
+fn setup(mut commands: Commands) {
     commands.spawn(Camera2d);
-    deal(&mut game, &mut timer);
 }
+
+// --------------------------------------------------------------------------- //
+// menu screens                                                                 //
+// --------------------------------------------------------------------------- //
+
+fn cleanup_screen(mut commands: Commands, roots: Query<Entity, With<ScreenRoot>>) {
+    for entity in &roots {
+        commands.entity(entity).despawn();
+    }
+}
+
+fn root(commands: &mut Commands) -> Entity {
+    commands
+        .spawn((
+            ScreenRoot,
+            Node {
+                width: percent(100),
+                height: percent(100),
+                flex_direction: FlexDirection::Column,
+                justify_content: JustifyContent::Center,
+                align_items: AlignItems::Center,
+                row_gap: px(22),
+                padding: UiRect::all(px(24)),
+                ..default()
+            },
+            BackgroundColor(BG),
+        ))
+        .id()
+}
+
+fn button<M: Bundle>(parent: &mut ChildSpawnerCommands, label: &str, marker: M) {
+    parent
+        .spawn((
+            Button,
+            marker,
+            Node {
+                padding: UiRect::axes(px(28), px(14)),
+                border: UiRect::all(px(3)),
+                border_radius: BorderRadius::all(px(12)),
+                min_width: px(180),
+                justify_content: JustifyContent::Center,
+                ..default()
+            },
+            BackgroundColor(KEY),
+            BorderColor::all(BORDER),
+        ))
+        .with_children(|button| {
+            button.spawn((
+                Text::new(label),
+                TextFont {
+                    font_size: FontSize::Px(24.0),
+                    ..default()
+                },
+                TextColor(TEXT),
+            ));
+        });
+}
+
+fn heading(parent: &mut ChildSpawnerCommands, text: &str, size: f32) {
+    parent.spawn((
+        Text::new(text),
+        TextFont {
+            font_size: FontSize::Px(size),
+            ..default()
+        },
+        TextColor(TEXT),
+    ));
+}
+
+fn spawn_title(mut commands: Commands) {
+    let root = root(&mut commands);
+    commands.entity(root).with_children(|ui| {
+        heading(ui, "SNAP 24", 72.0);
+        heading(ui, "Make the target from every card.", 24.0);
+        button(ui, "Play", PlayButton);
+    });
+}
+
+fn spawn_mode_select(mut commands: Commands) {
+    let root = root(&mut commands);
+    commands.entity(root).with_children(|ui| {
+        heading(ui, "Choose mode", 40.0);
+        heading(ui, "Classic: five cards, target 24.", 20.0);
+        heading(ui, "Custom: tiers change the card count and target.", 20.0);
+        button(ui, "Classic", ModeButton(Mode::Classic));
+        button(ui, "Custom", ModeButton(Mode::Custom));
+        button(ui, "Back", BackButton);
+    });
+}
+
+fn spawn_difficulty_select(mut commands: Commands) {
+    let root = root(&mut commands);
+    commands.entity(root).with_children(|ui| {
+        heading(ui, "Choose difficulty", 40.0);
+        for difficulty in Difficulty::ALL {
+            button(ui, difficulty.label(), DifficultyButton(difficulty));
+        }
+        button(ui, "Back", BackButton);
+    });
+}
+
+fn play_button(
+    interactions: Query<&Interaction, (Changed<Interaction>, With<PlayButton>)>,
+    mut next: ResMut<NextState<Screen>>,
+) {
+    if pressed(&interactions) {
+        next.set(Screen::ModeSelect);
+    }
+}
+
+fn mode_buttons(
+    interactions: Query<(&Interaction, &ModeButton), Changed<Interaction>>,
+    mut game: ResMut<Game>,
+    mut next: ResMut<NextState<Screen>>,
+) {
+    for (interaction, mode) in &interactions {
+        if *interaction == Interaction::Pressed {
+            game.mode = mode.0;
+            next.set(Screen::DifficultySelect);
+        }
+    }
+}
+
+fn difficulty_buttons(
+    interactions: Query<(&Interaction, &DifficultyButton), Changed<Interaction>>,
+    mut game: ResMut<Game>,
+    mut timer: ResMut<ViewTimer>,
+    time: Res<Time>,
+    mut next: ResMut<NextState<Screen>>,
+) {
+    for (interaction, difficulty) in &interactions {
+        if *interaction == Interaction::Pressed {
+            game.difficulty = difficulty.0;
+            deal(&mut game, &mut timer, time.elapsed_secs());
+            next.set(Screen::Playing);
+        }
+    }
+}
+
+fn back_buttons(
+    interactions: Query<&Interaction, (Changed<Interaction>, With<BackButton>)>,
+    screen: Res<State<Screen>>,
+    mut next: ResMut<NextState<Screen>>,
+) {
+    if !pressed(&interactions) {
+        return;
+    }
+    next.set(match screen.get() {
+        Screen::ModeSelect => Screen::Title,
+        Screen::DifficultySelect => Screen::ModeSelect,
+        Screen::Playing => Screen::ModeSelect,
+        Screen::Title => Screen::Title,
+    });
+}
+
+fn pressed<F: bevy::ecs::query::QueryFilter>(query: &Query<&Interaction, F>) -> bool {
+    query
+        .iter()
+        .any(|interaction| *interaction == Interaction::Pressed)
+}
+
+// --------------------------------------------------------------------------- //
+// play systems                                                                 //
+// --------------------------------------------------------------------------- //
 
 /// Counts down the view window and flips the cards face-down on expiry.
 fn tick_view(time: Res<Time>, mut timer: ResMut<ViewTimer>, mut game: ResMut<Game>) {
@@ -159,37 +374,21 @@ fn tick_view(time: Res<Time>, mut timer: ResMut<ViewTimer>, mut game: ResMut<Gam
     }
 }
 
-/// Dev convenience until ticket 08 adds difficulty screens: number keys 1-6
-/// pick a tier and deal immediately.
-fn tier_keys(
-    keys: Res<ButtonInput<KeyCode>>,
-    mut game: ResMut<Game>,
-    mut timer: ResMut<ViewTimer>,
-) {
-    const TIERS: [KeyCode; 6] = [
-        KeyCode::Digit1,
-        KeyCode::Digit2,
-        KeyCode::Digit3,
-        KeyCode::Digit4,
-        KeyCode::Digit5,
-        KeyCode::Digit6,
-    ];
-    for (index, key) in TIERS.iter().enumerate() {
-        if keys.just_pressed(*key) {
-            game.difficulty = Difficulty::ALL[index];
-            deal(&mut game, &mut timer);
-        }
+fn settle_round(time: Res<Time>, mut game: ResMut<Game>) {
+    if game.settled || game.round.phase == Phase::Playing {
+        return;
     }
-}
-
-fn update_countdown(timer: Res<ViewTimer>, mut labels: Query<&mut Text, With<CountdownLabel>>) {
-    let text = match timer.phase.seconds_left() {
-        Some(seconds) => format!("Remember! Hiding in {seconds}s"),
-        None => String::new(),
-    };
-    for mut label in &mut labels {
-        **label = text.clone();
-    }
+    let won = game.round.phase == Phase::Won;
+    let elapsed = (time.elapsed_secs() - game.started_at).max(0.0);
+    let score = round_score(
+        game.difficulty.score_multiplier(),
+        elapsed,
+        game.hints_used,
+        won,
+    );
+    game.total_score += score;
+    game.last_score = Some(score);
+    game.settled = true;
 }
 
 fn card_click(
@@ -227,23 +426,30 @@ fn undo_click(
     mut game: ResMut<Game>,
     interactions: Query<&Interaction, (Changed<Interaction>, With<UndoButton>)>,
 ) {
-    for interaction in &interactions {
-        if *interaction == Interaction::Pressed {
-            game.round.undo();
-            game.error = None;
-        }
+    if pressed(&interactions) {
+        game.round.undo();
+        game.error = None;
     }
 }
 
 fn new_puzzle(
     mut game: ResMut<Game>,
     mut timer: ResMut<ViewTimer>,
+    time: Res<Time>,
     interactions: Query<&Interaction, (Changed<Interaction>, With<NewPuzzleButton>)>,
 ) {
-    for interaction in &interactions {
-        if *interaction == Interaction::Pressed {
-            deal(&mut game, &mut timer);
-        }
+    if pressed(&interactions) {
+        deal(&mut game, &mut timer, time.elapsed_secs());
+    }
+}
+
+fn update_countdown(timer: Res<ViewTimer>, mut labels: Query<&mut Text, With<CountdownLabel>>) {
+    let text = match timer.phase.seconds_left() {
+        Some(seconds) => format!("Remember! Hiding in {seconds}s"),
+        None => String::new(),
+    };
+    for mut label in &mut labels {
+        **label = text.clone();
     }
 }
 
@@ -254,6 +460,7 @@ fn rebuild_board(mut commands: Commands, game: Res<Game>, existing: Query<Entity
 
     let root = commands
         .spawn((
+            ScreenRoot,
             Board,
             Node {
                 width: percent(100),
@@ -261,7 +468,7 @@ fn rebuild_board(mut commands: Commands, game: Res<Game>, existing: Query<Entity
                 flex_direction: FlexDirection::Column,
                 justify_content: JustifyContent::Center,
                 align_items: AlignItems::Center,
-                row_gap: px(22),
+                row_gap: px(18),
                 padding: UiRect::all(px(24)),
                 ..default()
             },
@@ -270,18 +477,16 @@ fn rebuild_board(mut commands: Commands, game: Res<Game>, existing: Query<Entity
         .id();
 
     commands.entity(root).with_children(|ui| {
-        ui.spawn((
-            Text::new(format!(
-                "Target: {}   ({})",
+        heading(
+            ui,
+            &format!(
+                "Target: {}   ({} · {})",
                 game.round.target,
-                difficulty_name(game.difficulty)
-            )),
-            TextFont {
-                font_size: FontSize::Px(44.0),
-                ..default()
-            },
-            TextColor(TEXT),
-        ));
+                game.mode.label(),
+                game.difficulty.label()
+            ),
+            40.0,
+        );
 
         ui.spawn((
             CountdownLabel,
@@ -381,13 +586,26 @@ fn rebuild_board(mut commands: Commands, game: Res<Game>, existing: Query<Entity
             TextColor(MUTED),
         ));
 
-        let undo_enabled = game.round.can_undo();
+        let score_line = match game.last_score {
+            Some(score) => format!("Round score: +{score}    Total: {}", game.total_score),
+            None => format!("Score: {}", game.total_score),
+        };
+        ui.spawn((
+            Text::new(score_line),
+            TextFont {
+                font_size: FontSize::Px(22.0),
+                ..default()
+            },
+            TextColor(MUTED),
+        ));
+
         ui.spawn(Node {
             flex_direction: FlexDirection::Row,
             column_gap: px(14),
             ..default()
         })
         .with_children(|row| {
+            let undo_enabled = game.round.can_undo();
             row.spawn((
                 Button,
                 UndoButton,
@@ -411,28 +629,8 @@ fn rebuild_board(mut commands: Commands, game: Res<Game>, existing: Query<Entity
                 ));
             });
 
-            row.spawn((
-                Button,
-                NewPuzzleButton,
-                Node {
-                    padding: UiRect::axes(px(24), px(12)),
-                    border: UiRect::all(px(3)),
-                    border_radius: BorderRadius::all(px(12)),
-                    ..default()
-                },
-                BackgroundColor(Color::srgb(0.20, 0.34, 0.62)),
-                BorderColor::all(TEXT),
-            ))
-            .with_children(|button| {
-                button.spawn((
-                    Text::new("New Puzzle"),
-                    TextFont {
-                        font_size: FontSize::Px(24.0),
-                        ..default()
-                    },
-                    TextColor(TEXT),
-                ));
-            });
+            button(row, "New Puzzle", NewPuzzleButton);
+            button(row, "Menu", BackButton);
         });
     });
 }

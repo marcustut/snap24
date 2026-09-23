@@ -103,6 +103,39 @@ impl Difficulty {
             Difficulty::Blind => Some(0),
         }
     }
+
+    pub fn label(self) -> &'static str {
+        match self {
+            Difficulty::Easy => "Easy",
+            Difficulty::Medium => "Medium",
+            Difficulty::Hard => "Hard",
+            Difficulty::Expert => "Expert",
+            Difficulty::Insane => "Insane",
+            Difficulty::Blind => "Blind",
+        }
+    }
+
+    /// Score multiplier for clearing a round at this tier. Ordered so a harder
+    /// tier never scores less.
+    pub fn score_multiplier(self) -> u32 {
+        match self {
+            Difficulty::Easy => 1,
+            Difficulty::Medium => 2,
+            Difficulty::Hard => 3,
+            Difficulty::Expert => 4,
+            Difficulty::Insane => 5,
+            Difficulty::Blind => 8,
+        }
+    }
+}
+
+impl Mode {
+    pub fn label(self) -> &'static str {
+        match self {
+            Mode::Classic => "Classic",
+            Mode::Custom => "Custom",
+        }
+    }
 }
 
 /// A dealt puzzle.
@@ -170,6 +203,14 @@ pub fn generate(mode: Mode, difficulty: Difficulty, rng: &mut Rng) -> Puzzle {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn multipliers_are_ordered_by_difficulty() {
+        let multipliers: Vec<u32> = Difficulty::ALL.iter().map(|d| d.score_multiplier()).collect();
+        assert!(multipliers.windows(2).all(|w| w[0] <= w[1]), "{multipliers:?}");
+        assert_eq!(Difficulty::Easy.score_multiplier(), 1);
+        assert_eq!(Difficulty::Blind.score_multiplier(), 8);
+    }
 
     #[test]
     fn ladder_is_five_down_to_three() {

@@ -275,6 +275,28 @@ impl Round {
     }
 }
 
+/// Base points for winning a round, before the tier multiplier.
+pub const BASE_SCORE: i32 = 100;
+/// Solving within this many seconds earns the full time bonus; slower solves
+/// earn proportionally less, never a negative bonus.
+pub const PAR_SECONDS: f32 = 90.0;
+pub const TIME_BONUS_PER_SECOND: i32 = 2;
+/// Points removed per hint used.
+pub const HINT_PENALTY: i32 = 30;
+
+/// Score for one finished round. Losing scores nothing; winning pays
+/// `tier_multiplier * BASE_SCORE`, plus a time bonus for solving under par,
+/// minus the hint penalty. Never negative.
+pub fn round_score(multiplier: u32, elapsed_secs: f32, hints_used: u32, won: bool) -> i32 {
+    if !won {
+        return 0;
+    }
+    let base = multiplier as i32 * BASE_SCORE;
+    let bonus = ((PAR_SECONDS - elapsed_secs).max(0.0) * TIME_BONUS_PER_SECOND as f32) as i32;
+    let penalty = hints_used as i32 * HINT_PENALTY;
+    (base + bonus - penalty).max(0)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -599,5 +621,34 @@ mod tests {
         let mut unlimited = ViewPhase::Unlimited;
         assert!(!unlimited.tick(99.0));
         assert_eq!(unlimited, ViewPhase::Unlimited);
+    }
+
+    #[test]
+    fn losing_scores_nothing() {
+        assert_eq!(round_score(8, 0.0, 0, false), 0);
+    }
+
+    #[test]
+    fn faster_wins_score_more_than_slower_ones() {
+        let fast = round_score(3, 10.0, 0, true);
+        let slow = round_score(3, 80.0, 0, true);
+        let over_par = round_score(3, 120.0, 0, true);
+        assert!(fast > slow);
+        assert!(slow > over_par);
+        assert_eq!(over_par, 3 * BASE_SCORE); // no bonus once past par
+    }
+
+    #[test]
+    fn hints_reduce_the_score_and_it_never_goes_negative() {
+        let clean = round_score(2, 0.0, 0, true);
+        let hinted = round_score(2, 0.0, 1, true);
+        assert_eq!(hinted, clean - HINT_PENALTY);
+        assert_eq!(round_score(1, 200.0, 100, true), 0);
+    }
+
+    #[test]
+    fn higher_tiers_multiply_the_base() {
+        assert_eq!(round_score(1, 200.0, 0, true), BASE_SCORE);
+        assert_eq!(round_score(4, 200.0, 0, true), 4 * BASE_SCORE);
     }
 }
