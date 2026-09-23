@@ -1,0 +1,9 @@
+[package]
+name = "snap24-app"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+snap24-core = { path = "../snap24-core" }
+bevy = "0.19"
