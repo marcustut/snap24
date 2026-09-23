@@ -104,19 +104,30 @@ impl Round {
         self.first == Some(index)
     }
 
+    fn push_history(&mut self) {
+        self.history.push(Snapshot {
+            cards: self.cards.clone(),
+            first: self.first,
+            op: self.op,
+            phase: self.phase,
+        });
+    }
+
     /// Tap a card. Without a first card this selects it; without an operator it
     /// replaces/clears the first card; with both set this is the second card and
-    /// performs the merge.
+    /// performs the merge. Every change is undoable.
     pub fn click_card(&mut self, index: usize) -> Result<(), MergeError> {
         if self.phase != Phase::Playing || index >= self.cards.len() {
             return Ok(());
         }
         match (self.first, self.op) {
             (None, _) => {
+                self.push_history();
                 self.first = Some(index);
                 Ok(())
             }
             (Some(first), None) => {
+                self.push_history();
                 if first == index {
                     self.first = None;
                 } else {
@@ -142,7 +153,10 @@ impl Round {
         if self.first.is_none() {
             return Err(MergeError::PickCardFirst);
         }
-        self.op = Some(op);
+        if self.op != Some(op) {
+            self.push_history();
+            self.op = Some(op);
+        }
         Ok(())
     }
 
@@ -162,12 +176,7 @@ impl Round {
             },
         };
 
-        self.history.push(Snapshot {
-            cards: self.cards.clone(),
-            first: self.first,
-            op: self.op,
-            phase: self.phase,
-        });
+        self.push_history();
 
         let (low, high) = if first < index { (first, index) } else { (index, first) };
         self.cards.remove(high);
@@ -355,7 +364,39 @@ mod tests {
         // The first card is re-selected so a different second card can be tried.
         assert_eq!(r.first, Some(0));
         assert_eq!(r.op, Some(Op::Add));
+        // The earlier selections are still on the stack, so undo keeps working.
+        assert!(r.can_undo());
+    }
+
+    #[test]
+    fn undo_clears_the_first_card_selection() {
+        let mut r = round(&[1, 2, 3], 6);
         assert!(!r.can_undo());
+        r.click_card(0).unwrap();
+        assert_eq!(r.first, Some(0));
+        assert!(r.can_undo());
+        assert!(r.undo());
+        assert_eq!(r.first, None);
+        assert!(!r.can_undo());
+    }
+
+    #[test]
+    fn undo_steps_back_through_selections_then_merges() {
+        let mut r = round(&[9, 1, 3], 24);
+        r.click_card(0).unwrap(); // pick 9
+        r.click_op(Op::Sub).unwrap(); // pick -
+        assert!(r.undo()); // un-pick the operator
+        assert_eq!((r.first, r.op), (Some(0), None));
+        assert!(r.undo()); // un-pick the first card
+        assert_eq!((r.first, r.op), (None, None));
+        assert!(!r.can_undo());
+
+        r.click_card(0).unwrap();
+        r.click_op(Op::Sub).unwrap();
+        r.click_card(1).unwrap(); // 9 - 1 = 8 (merge)
+        assert!(r.undo()); // back to "8" undo: restores 9,1,3 with 9 and - pending
+        assert_eq!(r.cards, vec![Rational::from(9), Rational::from(1), Rational::from(3)]);
+        assert_eq!((r.first, r.op), (Some(0), Some(Op::Sub)));
     }
 
     #[test]
@@ -369,8 +410,10 @@ mod tests {
         r.click_card(1).unwrap(); // 30 -> Lost
         assert_eq!(r.phase, Phase::Lost);
 
-        assert!(r.undo()); // back to 10, 3
-        assert!(r.undo()); // back to 9, 1, 3
+        // Undo repeatedly until the full three-card hand is back.
+        while r.cards.len() < 3 {
+            assert!(r.undo());
+        }
         assert_eq!(r.cards, vec![Rational::from(9), Rational::from(1), Rational::from(3)]);
 
         r.click_card(0).unwrap();
@@ -383,18 +426,31 @@ mod tests {
     }
 
     #[test]
-    fn selection_changes_do_not_create_undo_history() {
+    fn no_op_actions_do_not_create_undo_history() {
+        // An operator with no card selected changes nothing.
         let mut r = round(&[1, 2, 3], 6);
-        r.click_card(0).unwrap();
-        r.click_card(1).unwrap(); // replaces the first card
-        r.click_op(Op::Add).unwrap();
+        assert_eq!(r.click_op(Op::Add), Err(MergeError::PickCardFirst));
         assert!(!r.can_undo());
 
-        // A blocked merge must not become undoable either.
+        // A blocked merge changes nothing, so unwinding the two selections
+        // returns straight to the start.
         let mut r = round(&[6, 0], 6);
         r.click_card(0).unwrap();
         r.click_op(Op::Div).unwrap();
         assert_eq!(r.click_card(1), Err(MergeError::DivideByZero));
+        assert!(r.undo());
+        assert_eq!((r.first, r.op), (Some(0), None));
+        assert!(r.undo());
+        assert_eq!((r.first, r.op), (None, None));
+        assert!(!r.can_undo());
+
+        // Re-tapping the first card as the second operand is ignored.
+        let mut r = round(&[6, 0], 6);
+        r.click_card(0).unwrap();
+        r.click_op(Op::Mul).unwrap();
+        r.click_card(0).unwrap();
+        assert!(r.undo());
+        assert!(r.undo());
         assert!(!r.can_undo());
     }
 
