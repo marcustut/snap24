@@ -6,7 +6,7 @@
 mod logic;
 
 use bevy::prelude::*;
-use logic::{MergeError, Op, Phase, Round};
+use logic::{MergeError, Op, Phase, Round, ViewPhase};
 use snap24_core::{generate, Difficulty, Mode, Rng};
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -28,22 +28,14 @@ struct Game {
 }
 
 impl Game {
-    fn deal(&mut self) {
-        let puzzle = generate(self.mode, self.difficulty, &mut self.rng);
-        self.round = Round::new(puzzle.cards, puzzle.target);
-        self.error = None;
-    }
-
     fn new() -> Self {
-        let mut game = Game {
+        Game {
             round: Round::new(Vec::new(), 0i64.into()),
             rng: Rng::new(seed_from_time()),
             mode: Mode::Classic,
             difficulty: Difficulty::Easy,
             error: None,
-        };
-        game.deal();
-        game
+        }
     }
 
     fn status(&self) -> String {
@@ -62,6 +54,42 @@ impl Game {
                 self.round.target, self.round.cards[0]
             ),
         }
+    }
+}
+
+/// The view window lives in its own resource so the per-frame countdown does
+/// not mark `Game` changed and rebuild the board every frame.
+#[derive(Resource)]
+struct ViewTimer {
+    phase: ViewPhase,
+}
+
+impl Default for ViewTimer {
+    fn default() -> Self {
+        ViewTimer {
+            phase: ViewPhase::Unlimited,
+        }
+    }
+}
+
+fn deal(game: &mut Game, timer: &mut ViewTimer) {
+    let puzzle = generate(game.mode, game.difficulty, &mut game.rng);
+    game.round = Round::new(puzzle.cards, puzzle.target);
+    timer.phase = ViewPhase::from_view_seconds(game.difficulty.view_seconds());
+    if timer.phase == ViewPhase::Hidden {
+        game.round.conceal();
+    }
+    game.error = None;
+}
+
+fn difficulty_name(difficulty: Difficulty) -> &'static str {
+    match difficulty {
+        Difficulty::Easy => "Easy",
+        Difficulty::Medium => "Medium",
+        Difficulty::Hard => "Hard",
+        Difficulty::Expert => "Expert",
+        Difficulty::Insane => "Insane",
+        Difficulty::Blind => "Blind",
     }
 }
 
@@ -87,6 +115,9 @@ struct UndoButton;
 #[derive(Component)]
 struct NewPuzzleButton;
 
+#[derive(Component)]
+struct CountdownLabel;
+
 fn main() {
     App::new()
         .add_plugins(DefaultPlugins.set(WindowPlugin {
@@ -97,23 +128,68 @@ fn main() {
             ..default()
         }))
         .insert_resource(Game::new())
+        .init_resource::<ViewTimer>()
         .add_systems(Startup, setup)
         .add_systems(
             Update,
             (
+                tick_view,
+                tier_keys,
                 card_click,
                 operator_click,
                 undo_click,
                 new_puzzle,
                 rebuild_board.run_if(resource_changed::<Game>),
+                update_countdown,
             )
                 .chain(),
         )
         .run();
 }
 
-fn setup(mut commands: Commands) {
+fn setup(mut commands: Commands, mut game: ResMut<Game>, mut timer: ResMut<ViewTimer>) {
     commands.spawn(Camera2d);
+    deal(&mut game, &mut timer);
+}
+
+/// Counts down the view window and flips the cards face-down on expiry.
+fn tick_view(time: Res<Time>, mut timer: ResMut<ViewTimer>, mut game: ResMut<Game>) {
+    if timer.phase.tick(time.delta_secs()) {
+        game.round.conceal();
+    }
+}
+
+/// Dev convenience until ticket 08 adds difficulty screens: number keys 1-6
+/// pick a tier and deal immediately.
+fn tier_keys(
+    keys: Res<ButtonInput<KeyCode>>,
+    mut game: ResMut<Game>,
+    mut timer: ResMut<ViewTimer>,
+) {
+    const TIERS: [KeyCode; 6] = [
+        KeyCode::Digit1,
+        KeyCode::Digit2,
+        KeyCode::Digit3,
+        KeyCode::Digit4,
+        KeyCode::Digit5,
+        KeyCode::Digit6,
+    ];
+    for (index, key) in TIERS.iter().enumerate() {
+        if keys.just_pressed(*key) {
+            game.difficulty = Difficulty::ALL[index];
+            deal(&mut game, &mut timer);
+        }
+    }
+}
+
+fn update_countdown(timer: Res<ViewTimer>, mut labels: Query<&mut Text, With<CountdownLabel>>) {
+    let text = match timer.phase.seconds_left() {
+        Some(seconds) => format!("Remember! Hiding in {seconds}s"),
+        None => String::new(),
+    };
+    for mut label in &mut labels {
+        **label = text.clone();
+    }
 }
 
 fn card_click(
@@ -161,11 +237,12 @@ fn undo_click(
 
 fn new_puzzle(
     mut game: ResMut<Game>,
+    mut timer: ResMut<ViewTimer>,
     interactions: Query<&Interaction, (Changed<Interaction>, With<NewPuzzleButton>)>,
 ) {
     for interaction in &interactions {
         if *interaction == Interaction::Pressed {
-            game.deal();
+            deal(&mut game, &mut timer);
         }
     }
 }
@@ -194,12 +271,26 @@ fn rebuild_board(mut commands: Commands, game: Res<Game>, existing: Query<Entity
 
     commands.entity(root).with_children(|ui| {
         ui.spawn((
-            Text::new(format!("Target: {}", game.round.target)),
+            Text::new(format!(
+                "Target: {}   ({})",
+                game.round.target,
+                difficulty_name(game.difficulty)
+            )),
             TextFont {
                 font_size: FontSize::Px(44.0),
                 ..default()
             },
             TextColor(TEXT),
+        ));
+
+        ui.spawn((
+            CountdownLabel,
+            Text::new(""),
+            TextFont {
+                font_size: FontSize::Px(22.0),
+                ..default()
+            },
+            TextColor(Color::srgb(0.98, 0.75, 0.35)),
         ));
 
         ui.spawn(Node {
@@ -212,6 +303,11 @@ fn rebuild_board(mut commands: Commands, game: Res<Game>, existing: Query<Entity
         .with_children(|row| {
             for (index, label) in game.round.card_labels().iter().enumerate() {
                 let selected = game.round.is_first(index);
+                let shown = if game.round.is_revealed(index) {
+                    label.clone()
+                } else {
+                    "?".to_string()
+                };
                 row.spawn((
                     Button,
                     CardButton(index),
@@ -229,7 +325,7 @@ fn rebuild_board(mut commands: Commands, game: Res<Game>, existing: Query<Entity
                 ))
                 .with_children(|card| {
                     card.spawn((
-                        Text::new(label.clone()),
+                        Text::new(shown),
                         TextFont {
                             font_size: FontSize::Px(48.0),
                             ..default()

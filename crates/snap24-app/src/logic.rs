@@ -45,9 +45,50 @@ pub enum MergeError {
     DivideByZero,
 }
 
+/// The view window: how long the dealt cards stay face-up. `Easy` is
+/// unlimited, `Blind` starts hidden, everything else counts down then conceals.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum ViewPhase {
+    Unlimited,
+    Visible { remaining: f32 },
+    Hidden,
+}
+
+impl ViewPhase {
+    pub fn from_view_seconds(seconds: Option<u32>) -> Self {
+        match seconds {
+            None => ViewPhase::Unlimited,
+            Some(0) => ViewPhase::Hidden,
+            Some(n) => ViewPhase::Visible { remaining: n as f32 },
+        }
+    }
+
+    /// Whole seconds left, for the on-screen countdown.
+    pub fn seconds_left(self) -> Option<u32> {
+        match self {
+            ViewPhase::Visible { remaining } => Some(remaining.max(0.0).ceil() as u32),
+            _ => None,
+        }
+    }
+
+    /// Advance by `dt` seconds. Returns `true` only on the tick that just
+    /// ended the view window, so the caller knows to flip the cards.
+    pub fn tick(&mut self, dt: f32) -> bool {
+        if let ViewPhase::Visible { remaining } = self {
+            *remaining -= dt;
+            if *remaining <= 0.0 {
+                *self = ViewPhase::Hidden;
+                return true;
+            }
+        }
+        false
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 struct Snapshot {
     cards: Vec<Rational>,
+    revealed: Vec<bool>,
     first: Option<usize>,
     op: Option<Op>,
     phase: Phase,
@@ -60,6 +101,8 @@ struct Snapshot {
 pub struct Round {
     pub target: Rational,
     pub cards: Vec<Rational>,
+    /// Whether each card is currently face-up. Parallel to `cards`.
+    pub revealed: Vec<bool>,
     /// Index of the first operand, if one has been tapped.
     pub first: Option<usize>,
     /// The operator chosen after the first card, if any.
@@ -70,14 +113,27 @@ pub struct Round {
 
 impl Round {
     pub fn new(cards: Vec<i64>, target: Rational) -> Self {
+        let cards: Vec<Rational> = cards.into_iter().map(Rational::from).collect();
+        let revealed = vec![true; cards.len()];
         Round {
             target,
-            cards: cards.into_iter().map(Rational::from).collect(),
+            cards,
+            revealed,
             first: None,
             op: None,
             phase: Phase::Playing,
             history: Vec::new(),
         }
+    }
+
+    /// Flip every card face-down (timer expiry, or the Blind tier from the
+    /// start). Slot positions do not move.
+    pub fn conceal(&mut self) {
+        self.revealed.iter_mut().for_each(|shown| *shown = false);
+    }
+
+    pub fn is_revealed(&self, index: usize) -> bool {
+        self.revealed.get(index).copied().unwrap_or(false)
     }
 
     pub fn can_undo(&self) -> bool {
@@ -91,6 +147,7 @@ impl Round {
         match self.history.pop() {
             Some(snapshot) => {
                 self.cards = snapshot.cards;
+                self.revealed = snapshot.revealed;
                 self.first = snapshot.first;
                 self.op = snapshot.op;
                 self.phase = snapshot.phase;
@@ -107,6 +164,7 @@ impl Round {
     fn push_history(&mut self) {
         self.history.push(Snapshot {
             cards: self.cards.clone(),
+            revealed: self.revealed.clone(),
             first: self.first,
             op: self.op,
             phase: self.phase,
@@ -182,6 +240,11 @@ impl Round {
         self.cards.remove(high);
         self.cards.remove(low);
         self.cards.insert(low, value);
+        // Agreed reveal rule: the computed merge result is always shown, even
+        // when the operands were face-down. The other cards keep their state.
+        self.revealed.remove(high);
+        self.revealed.remove(low);
+        self.revealed.insert(low, true);
         self.first = None;
         self.op = None;
 
@@ -465,5 +528,76 @@ mod tests {
         assert_eq!(r.first, None);
         assert_eq!(r.click_op(Op::Add), Ok(()));
         assert_eq!(r.op, None);
+    }
+
+    #[test]
+    fn cards_start_revealed() {
+        let r = round(&[1, 2, 3], 6);
+        assert_eq!(r.revealed, vec![true, true, true]);
+        assert!(r.is_revealed(0));
+        assert!(!r.is_revealed(99));
+    }
+
+    #[test]
+    fn conceal_hides_every_card_without_moving_slots() {
+        let mut r = round(&[9, 1, 3], 24);
+        let before = r.cards.clone();
+        r.conceal();
+        assert_eq!(r.revealed, vec![false, false, false]);
+        assert_eq!(r.cards, before);
+    }
+
+    #[test]
+    fn merge_reveals_only_the_result_when_operands_were_hidden() {
+        let mut r = round(&[9, 1, 3], 24);
+        r.conceal();
+        r.click_card(0).unwrap();
+        r.click_op(Op::Sub).unwrap();
+        r.click_card(1).unwrap(); // 9 - 1 = 8
+        assert_eq!(r.cards, vec![Rational::from(8), Rational::from(3)]);
+        // The result is shown; the untouched card stays face-down.
+        assert_eq!(r.revealed, vec![true, false]);
+    }
+
+    #[test]
+    fn undo_restores_reveal_state() {
+        let mut r = round(&[9, 1, 3], 24);
+        r.conceal();
+        r.click_card(0).unwrap();
+        r.click_op(Op::Sub).unwrap();
+        r.click_card(1).unwrap();
+        assert_eq!(r.revealed, vec![true, false]);
+        assert!(r.undo());
+        assert_eq!(r.revealed, vec![false, false, false]);
+        assert_eq!(r.cards, vec![Rational::from(9), Rational::from(1), Rational::from(3)]);
+    }
+
+    #[test]
+    fn view_phase_maps_from_tier_seconds() {
+        assert_eq!(ViewPhase::from_view_seconds(None), ViewPhase::Unlimited);
+        assert_eq!(ViewPhase::from_view_seconds(Some(0)), ViewPhase::Hidden);
+        assert_eq!(
+            ViewPhase::from_view_seconds(Some(10)),
+            ViewPhase::Visible { remaining: 10.0 }
+        );
+        assert_eq!(ViewPhase::from_view_seconds(Some(10)).seconds_left(), Some(10));
+        assert_eq!(ViewPhase::Unlimited.seconds_left(), None);
+        assert_eq!(ViewPhase::Hidden.seconds_left(), None);
+    }
+
+    #[test]
+    fn view_phase_ticks_down_and_expires_exactly_once() {
+        let mut view = ViewPhase::from_view_seconds(Some(2));
+        assert!(!view.tick(0.5));
+        assert_eq!(view.seconds_left(), Some(2)); // ceil(1.5)
+        assert!(!view.tick(1.0));
+        assert_eq!(view.seconds_left(), Some(1)); // ceil(0.5)
+        assert!(view.tick(1.0)); // crosses zero -> just expired
+        assert_eq!(view, ViewPhase::Hidden);
+        assert!(!view.tick(1.0)); // hidden stays hidden, no repeat expiry
+
+        let mut unlimited = ViewPhase::Unlimited;
+        assert!(!unlimited.tick(99.0));
+        assert_eq!(unlimited, ViewPhase::Unlimited);
     }
 }
