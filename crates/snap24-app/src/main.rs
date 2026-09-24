@@ -17,7 +17,10 @@ mod devtools;
 
 use bevy::prelude::*;
 use logic::{round_score, MergeError, Op, Phase, Round, ViewPhase};
-use snap24_core::{generate, generate_targeted, Difficulty, Mode, Puzzle, Rational, Rng};
+use snap24_core::{
+    evaluate, first_move, generate, generate_targeted, move_sequence, solutions_infix, Difficulty,
+    Mode, Puzzle, Rational, Rng,
+};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 const BG: Color = Color::srgb(0.07, 0.08, 0.11);
@@ -82,7 +85,11 @@ struct Game {
     mode: Mode,
     difficulty: Difficulty,
     error: Option<String>,
+    /// The original dealt cards, kept for reveal (the board mutates as you play).
+    dealt: Vec<i64>,
     hints_used: u32,
+    hint_level: u32,
+    message: String,
     started_at: f32,
     settled: bool,
     last_score: Option<i32>,
@@ -97,7 +104,10 @@ impl Game {
             mode: Mode::Classic,
             difficulty: Difficulty::Easy,
             error: None,
+            dealt: Vec::new(),
             hints_used: 0,
+            hint_level: 0,
+            message: String::new(),
             started_at: 0.0,
             settled: false,
             last_score: None,
@@ -170,6 +180,7 @@ struct BoardUi {
     countdown: Entity,
     status: Entity,
     score: Entity,
+    message: Entity,
     undo: Entity,
     undo_label: Entity,
     cards: [Entity; MAX_CARDS],
@@ -178,6 +189,7 @@ struct BoardUi {
 }
 
 fn start_puzzle(game: &mut Game, timer: &mut ViewTimer, now: f32, puzzle: Puzzle) {
+    game.dealt = puzzle.cards.clone();
     game.round = Round::new(puzzle.cards, puzzle.target);
     timer.phase = ViewPhase::from_view_seconds(game.difficulty.view_seconds());
     if timer.phase == ViewPhase::Hidden {
@@ -185,6 +197,8 @@ fn start_puzzle(game: &mut Game, timer: &mut ViewTimer, now: f32, puzzle: Puzzle
     }
     game.error = None;
     game.hints_used = 0;
+    game.hint_level = 0;
+    game.message = String::new();
     game.started_at = now;
     game.settled = false;
     game.last_score = None;
@@ -266,6 +280,12 @@ struct OperatorButton(Op);
 struct UndoButton;
 
 #[derive(Component)]
+struct HintButton;
+
+#[derive(Component)]
+struct RevealButton;
+
+#[derive(Component)]
 struct NewPuzzleButton;
 
 #[derive(Component)]
@@ -320,12 +340,14 @@ fn main() {
     .add_systems(
         Update,
         (
-            tick_view,
-            card_click,
-            operator_click,
-            undo_click,
-            new_puzzle,
-            settle_round,
+                tick_view,
+                card_click,
+                operator_click,
+                undo_click,
+                hint_button,
+                reveal_button,
+                new_puzzle,
+                settle_round,
             update_board.run_if(resource_changed::<Game>),
             update_countdown,
         )
@@ -501,6 +523,7 @@ fn spawn_board(mut commands: Commands) {
     let mut countdown = Entity::PLACEHOLDER;
     let mut status = Entity::PLACEHOLDER;
     let mut score = Entity::PLACEHOLDER;
+    let mut message = Entity::PLACEHOLDER;
     let mut undo = Entity::PLACEHOLDER;
     let mut undo_label = Entity::PLACEHOLDER;
     let mut cards = [Entity::PLACEHOLDER; MAX_CARDS];
@@ -598,13 +621,31 @@ fn spawn_board(mut commands: Commands) {
 
                 status = text_entity(ui, 24.0, MUTED);
                 score = text_entity(ui, 22.0, MUTED);
+                message = ui
+                    .spawn((
+                        Text::new(""),
+                        TextFont {
+                            font_size: FontSize::Px(20.0),
+                            ..default()
+                        },
+                        TextColor(TIMER),
+                        Node {
+                            max_width: percent(90),
+                            ..default()
+                        },
+                    ))
+                    .id();
 
                 ui.spawn(Node {
                     flex_direction: FlexDirection::Row,
                     column_gap: px(14),
+                    flex_wrap: FlexWrap::Wrap,
+                    justify_content: JustifyContent::Center,
                     ..default()
                 })
                 .with_children(|row| {
+                    button_width(row, "Hint", HintButton, 120.0);
+                    button_width(row, "Reveal", RevealButton, 120.0);
                     undo = row
                         .spawn((
                             Button,
@@ -635,6 +676,7 @@ fn spawn_board(mut commands: Commands) {
         countdown,
         status,
         score,
+        message,
         undo,
         undo_label,
         cards,
@@ -823,6 +865,74 @@ fn undo_click(
     }
 }
 
+/// Progressive hint text for the current board and hint level.
+fn hint_text(game: &Game) -> String {
+    let board = &game.round.cards;
+    let target = game.round.target;
+    let Some(step) = first_move(board, target) else {
+        return "No solution from here.".to_string();
+    };
+    match game.hint_level {
+        1 => format!("Combine {} and {}.", step.left, step.right),
+        2 => format!("Use '{}' on {} and {}.", step.op, step.left, step.right),
+        3 => format!("{} {} {} = {}", step.left, step.op, step.right, step.result),
+        _ => {
+            let steps: Vec<String> = move_sequence(board, target)
+                .iter()
+                .map(|m| format!("{} {} {} = {}", m.left, m.op, m.right, m.result))
+                .collect();
+            format!("Solution: {}", steps.join(" ; "))
+        }
+    }
+}
+
+/// Distinct solutions for the original puzzle, each re-checked through the
+/// evaluator before it is shown.
+fn reveal_text(game: &Game) -> String {
+    let cards: Vec<Rational> = game.dealt.iter().copied().map(Rational::from).collect();
+    let target = game.round.target;
+    let valid: Vec<String> = solutions_infix(&cards, target)
+        .into_iter()
+        .filter(|infix| evaluate(&game.dealt, infix).map(|value| value == target) == Ok(true))
+        .collect();
+    match valid.len() {
+        0 => "No solutions to reveal.".to_string(),
+        count => {
+            let shown: Vec<&String> = valid.iter().take(4).collect();
+            let more = if count > shown.len() {
+                format!("   (+{} more)", count - shown.len())
+            } else {
+                String::new()
+            };
+            format!(
+                "{count} solution(s):  {}{more}",
+                shown.iter().map(|s| s.as_str()).collect::<Vec<_>>().join("   ")
+            )
+        }
+    }
+}
+
+fn hint_button(
+    mut game: ResMut<Game>,
+    interactions: Query<&Interaction, (Changed<Interaction>, With<HintButton>)>,
+) {
+    if !pressed(&interactions) || game.round.phase != Phase::Playing {
+        return;
+    }
+    game.hint_level = (game.hint_level + 1).min(4);
+    game.hints_used += 1;
+    game.message = hint_text(&game);
+}
+
+fn reveal_button(
+    mut game: ResMut<Game>,
+    interactions: Query<&Interaction, (Changed<Interaction>, With<RevealButton>)>,
+) {
+    if pressed(&interactions) {
+        game.message = reveal_text(&game);
+    }
+}
+
 fn new_puzzle(
     mut game: ResMut<Game>,
     mut timer: ResMut<ViewTimer>,
@@ -857,6 +967,7 @@ fn update_board(
         ),
     );
     set_text(&mut texts, ui.status, game.status());
+    set_text(&mut texts, ui.message, game.message.clone());
     set_text(
         &mut texts,
         ui.score,

@@ -99,6 +99,11 @@ impl Rational {
     pub fn is_positive(self) -> bool {
         self.num > 0
     }
+
+    /// The value as an `i64`, if it is a whole number.
+    pub fn as_i64(self) -> Option<i64> {
+        (self.den == 1).then_some(self.num)
+    }
 }
 
 impl From<i64> for Rational {
@@ -181,7 +186,7 @@ impl Op {
 /// so a tree can be reused by many parent nodes without deep cloning.
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 enum Expr {
-    Leaf(i64),
+    Leaf(Rational),
     Nary { op: Op, children: Vec<ExprRef> },
     Bin { op: Op, left: ExprRef, right: ExprRef },
 }
@@ -206,10 +211,26 @@ impl Expr {
         }
     }
 
+    /// Standard infix rendering (`+ - * /` and parentheses), suitable for
+    /// [`evaluate`]. Unlike the canonical serialization this is what a player
+    /// would type, so a solution can be re-validated through the evaluator.
+    fn to_infix(&self) -> String {
+        match self {
+            Expr::Leaf(v) => v.to_string(),
+            Expr::Nary { op, children } => {
+                let parts: Vec<String> = children.iter().map(|c| c.to_infix()).collect();
+                format!("({})", parts.join(&format!(" {} ", op.symbol())))
+            }
+            Expr::Bin { op, left, right } => {
+                format!("({} {} {})", left.to_infix(), op.symbol(), right.to_infix())
+            }
+        }
+    }
+
     #[cfg(test)]
     fn value(&self) -> Rational {
         match self {
-            Expr::Leaf(v) => Rational::from(*v),
+            Expr::Leaf(v) => *v,
             Expr::Nary { op, children } => children.iter().map(|c| c.value()).fold(
                 match op {
                     Op::Add => Rational::from(0),
@@ -233,7 +254,7 @@ impl Expr {
     #[cfg(test)]
     fn leaves(&self, out: &mut Vec<i64>) {
         match self {
-            Expr::Leaf(v) => out.push(*v),
+            Expr::Leaf(v) => out.push(v.as_i64().expect("card leaves are integers")),
             Expr::Nary { children, .. } => children.iter().for_each(|c| c.leaves(out)),
             Expr::Bin { left, right, .. } => {
                 left.leaves(out);
@@ -304,13 +325,18 @@ const OPS: [Op; 4] = [Op::Add, Op::Sub, Op::Mul, Op::Div];
 
 /// All values exactly reachable using every dealt card exactly once.
 pub fn reachable(cards: &[i64]) -> BTreeSet<Rational> {
+    reachable_values(&cards.iter().copied().map(Rational::from).collect::<Vec<_>>())
+}
+
+/// [`reachable`] over arbitrary (possibly already-merged) board values.
+pub fn reachable_values(cards: &[Rational]) -> BTreeSet<Rational> {
     let n = cards.len();
     if n == 0 {
         return BTreeSet::new();
     }
     let mut dp: Vec<HashSet<Rational>> = vec![HashSet::new(); 1 << n];
     for (i, card) in cards.iter().enumerate() {
-        dp[1 << i].insert(Rational::from(*card));
+        dp[1 << i].insert(*card);
     }
     for mask in 1usize..(1 << n) {
         if mask.count_ones() < 2 {
@@ -351,10 +377,18 @@ pub fn reachable(cards: &[i64]) -> BTreeSet<Rational> {
 /// Unlike [`solve`] this never builds expression trees, so it is the cheap
 /// "can this be won?" check.
 pub fn is_solvable(cards: &[i64], target: impl Into<Rational>) -> bool {
-    reachable(cards).contains(&target.into())
+    is_solvable_values(
+        &cards.iter().copied().map(Rational::from).collect::<Vec<_>>(),
+        target.into(),
+    )
 }
 
-fn solve_exprs(cards: &[i64], target: Rational) -> Vec<ExprRef> {
+/// [`is_solvable`] over arbitrary (possibly already-merged) board values.
+pub fn is_solvable_values(cards: &[Rational], target: Rational) -> bool {
+    reachable_values(cards).contains(&target)
+}
+
+fn solve_exprs(cards: &[Rational], target: Rational) -> Vec<ExprRef> {
     let n = cards.len();
     if n == 0 {
         return Vec::new();
@@ -365,7 +399,7 @@ fn solve_exprs(cards: &[i64], target: Rational) -> Vec<ExprRef> {
     let mut dp: Vec<HashMap<Rational, HashSet<ExprRef>>> = vec![HashMap::new(); 1 << n];
     for (i, card) in cards.iter().enumerate() {
         dp[1 << i]
-            .entry(Rational::from(*card))
+            .entry(*card)
             .or_default()
             .insert(Rc::new(Expr::Leaf(*card)));
     }
@@ -413,10 +447,109 @@ fn solve_exprs(cards: &[i64], target: Rational) -> Vec<ExprRef> {
 /// serializations, sorted byte-wise. Duplicate trees that differ only by
 /// commutativity/associativity are returned once (see `docs/canonical-form.md`).
 pub fn solve(cards: &[i64], target: impl Into<Rational>) -> Vec<String> {
-    solve_exprs(cards, target.into())
+    solve_values(
+        &cards.iter().copied().map(Rational::from).collect::<Vec<_>>(),
+        target.into(),
+    )
+}
+
+/// [`solve`] over arbitrary (possibly already-merged) board values.
+pub fn solve_values(cards: &[Rational], target: Rational) -> Vec<String> {
+    solve_exprs(cards, target)
         .iter()
         .map(|e| e.serialize())
         .collect()
+}
+
+/// Distinct solutions rendered as standard infix expressions, so each can be
+/// checked by feeding it back through [`evaluate`].
+pub fn solutions_infix(cards: &[Rational], target: Rational) -> Vec<String> {
+    solve_exprs(cards, target)
+        .iter()
+        .map(|e| e.to_infix())
+        .collect()
+}
+
+/// One move: combine `left` and `right` with `op` to get `result`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Move {
+    pub left: Rational,
+    pub right: Rational,
+    pub op: char,
+    pub result: Rational,
+}
+
+/// A first move that keeps the board on a path to `target`, if one exists.
+///
+/// Searches card pairs and operators and returns the first move whose resulting
+/// board is still solvable, so a hint built from it can never send the player
+/// somewhere unwinnable.
+pub fn first_move(cards: &[Rational], target: Rational) -> Option<Move> {
+    for i in 0..cards.len() {
+        for j in (i + 1)..cards.len() {
+            for (left, right, op, result) in candidate_moves(cards[i], cards[j]) {
+                let mut next: Vec<Rational> = cards
+                    .iter()
+                    .enumerate()
+                    .filter(|(k, _)| *k != i && *k != j)
+                    .map(|(_, value)| *value)
+                    .collect();
+                next.push(result);
+                if is_solvable_values(&next, target) {
+                    return Some(Move {
+                        left,
+                        right,
+                        op,
+                        result,
+                    });
+                }
+            }
+        }
+    }
+    None
+}
+
+/// The full sequence of moves from `cards` to `target`, each step chosen by
+/// [`first_move`]. Empty if the board cannot reach the target.
+pub fn move_sequence(cards: &[Rational], target: Rational) -> Vec<Move> {
+    let mut current: Vec<Rational> = cards.to_vec();
+    let mut moves = Vec::new();
+    while current.len() > 1 {
+        let Some(next) = first_move(&current, target) else {
+            break;
+        };
+        remove_one(&mut current, next.left);
+        remove_one(&mut current, next.right);
+        current.push(next.result);
+        moves.push(next);
+    }
+    moves
+}
+
+/// `(left, right, operator, result)` candidates from combining `a` and `b`,
+/// including both operand orders for `-` and `/`. The operand order matches the
+/// result, so a move renders as `left <op> right = result`. Division by zero is
+/// skipped.
+fn candidate_moves(a: Rational, b: Rational) -> Vec<(Rational, Rational, char, Rational)> {
+    let mut out = vec![
+        (a, b, '+', a.add(b)),
+        (a, b, '-', a.sub(b)),
+        (b, a, '-', b.sub(a)),
+        (a, b, '*', a.mul(b)),
+    ];
+    if !b.is_zero() {
+        out.push((a, b, '/', a.div(b).unwrap()));
+    }
+    if !a.is_zero() {
+        out.push((b, a, '/', b.div(a).unwrap()));
+    }
+    out
+}
+
+fn remove_one(values: &mut Vec<Rational>, value: Rational) {
+    if let Some(pos) = values.iter().position(|v| *v == value) {
+        values.remove(pos);
+    }
 }
 
 // --------------------------------------------------------------------------- //
@@ -442,8 +575,22 @@ mod tests {
         }
     }
 
+    fn values(cards: &[i64]) -> Vec<Rational> {
+        cards.iter().copied().map(Rational::from).collect()
+    }
+
+    fn apply(left: Rational, right: Rational, op: char) -> Option<Rational> {
+        match op {
+            '+' => Some(left.add(right)),
+            '-' => Some(left.sub(right)),
+            '*' => Some(left.mul(right)),
+            '/' => left.div(right),
+            _ => None,
+        }
+    }
+
     fn assert_sound_and_unique(cards: &[i64], target: Rational) {
-        let exprs = solve_exprs(cards, target);
+        let exprs = solve_exprs(&values(cards), target);
         let mut keys = HashSet::new();
         let mut sorted_cards = cards.to_vec();
         sorted_cards.sort();
@@ -475,6 +622,84 @@ mod tests {
         sorted.sort();
         assert_eq!(solutions, sorted);
         assert_eq!(solutions.iter().collect::<HashSet<_>>().len(), solutions.len());
+    }
+
+    #[test]
+    fn rendered_solutions_revalidate_through_the_evaluator() {
+        let cases: &[(&[i64], Rational)] = &[
+            (&[1, 1, 1, 1, 8], Rational::from(24)),
+            (&[3, 3, 8, 8], Rational::from(24)),
+            (&[1, 1, 3, 4], Rational::new(7, 2)),
+        ];
+        for (cards, target) in cases {
+            let solutions = solutions_infix(&values(cards), *target);
+            assert_eq!(solutions.len(), solve(cards, *target).len());
+            assert!(!solutions.is_empty());
+            for infix in &solutions {
+                assert_eq!(evaluate(cards, infix), Ok(*target), "revalidate {infix:?}");
+            }
+        }
+    }
+
+    #[test]
+    fn move_sequence_reaches_the_target() {
+        let cards = values(&[1, 1, 1, 1, 8]);
+        let target = Rational::from(24);
+        let moves = move_sequence(&cards, target);
+        assert_eq!(moves.len(), 4, "one merge per extra card");
+        let mut current = cards.clone();
+        for step in &moves {
+            assert!(
+                candidate_moves(step.left, step.right).iter().any(
+                    |(left, right, op, result)| *left == step.left
+                        && *right == step.right
+                        && *op == step.op
+                        && *result == step.result
+                ),
+                "invalid step {step:?}"
+            );
+            assert_eq!(
+                apply(step.left, step.right, step.op),
+                Some(step.result),
+                "equation does not hold {step:?}"
+            );
+            remove_one(&mut current, step.left);
+            remove_one(&mut current, step.right);
+            current.push(step.result);
+        }
+        assert_eq!(current, vec![target]);
+    }
+
+    #[test]
+    fn first_move_keeps_the_board_solvable_and_none_when_hopeless() {
+        let cards = values(&[1, 1, 1, 1, 8]);
+        let target = Rational::from(24);
+        let step = first_move(&cards, target).expect("solvable hand has a first move");
+        let mut next = cards.clone();
+        remove_one(&mut next, step.left);
+        remove_one(&mut next, step.right);
+        next.push(step.result);
+        assert!(is_solvable_values(&next, target));
+        assert!(first_move(&values(&[9, 10, 9, 9, 1]), target).is_none());
+    }
+
+    #[test]
+    fn hints_work_from_a_mid_game_board() {
+        let cards = values(&[1, 1, 1, 1, 8]);
+        let target = Rational::from(24);
+        let first = first_move(&cards, target).expect("solvable");
+        let mut board = cards.clone();
+        remove_one(&mut board, first.left);
+        remove_one(&mut board, first.right);
+        board.push(first.result); // a real 4-card mid-game board
+
+        let step = first_move(&board, target).expect("mid-game board is solvable");
+        let mut next = board.clone();
+        remove_one(&mut next, step.left);
+        remove_one(&mut next, step.right);
+        next.push(step.result);
+        assert!(is_solvable_values(&next, target));
+        assert_eq!(move_sequence(&board, target).last().unwrap().result, target);
     }
 
     #[test]

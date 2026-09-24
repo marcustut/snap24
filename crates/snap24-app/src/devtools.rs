@@ -19,8 +19,10 @@
 //! `undo`, `new`, `menu`, `back`, `wait:N`, `shot:NAME`. Set `SNAP24_SEED` for a
 //! reproducible deal.
 
-use crate::logic::Op;
-use crate::{begin_game, Game, Screen, TargetEntry, ViewTimer};
+use crate::logic::{Op, Phase};
+use crate::{
+    begin_game, hint_text, reveal_text, Game, Screen, TargetEntry, ViewTimer,
+};
 use bevy::prelude::*;
 use bevy::render::view::screenshot::{save_to_disk, Screenshot};
 use snap24_core::{Difficulty, Mode};
@@ -71,6 +73,8 @@ enum Step {
     Back,
     Target(Option<i64>),
     Start,
+    Hint,
+    Reveal,
     Wait(u32),
     Shot(String),
 }
@@ -109,6 +113,8 @@ fn parse(script: &str) -> Vec<Step> {
             ("target", Some("random")) => steps.push(Step::Target(None)),
             ("target", Some(value)) => steps.push(Step::Target(value.parse().ok())),
             ("start", _) => steps.push(Step::Start),
+            ("hint", _) => steps.push(Step::Hint),
+            ("reveal", _) => steps.push(Step::Reveal),
             ("menu", _) => steps.push(Step::Menu),
             ("back", _) => steps.push(Step::Back),
             ("wait", Some(value)) => steps.push(Step::Wait(value.parse().unwrap_or(1))),
@@ -171,6 +177,14 @@ fn run_script(
         Step::Card(index) => game.play_card(index),
         Step::Op(op) => game.play_op(op),
         Step::Undo => game.undo(),
+        Step::Hint => {
+            if game.round.phase == Phase::Playing {
+                game.hint_level = (game.hint_level + 1).min(4);
+                game.hints_used += 1;
+                game.message = hint_text(&game);
+            }
+        }
+        Step::Reveal => game.message = reveal_text(&game),
         Step::New => crate::deal(&mut game, &mut timer, time.elapsed_secs()),
         Step::Menu => next.set(Screen::ModeSelect),
         Step::Target(value) => {
