@@ -195,6 +195,17 @@ fn deal(game: &mut Game, timer: &mut ViewTimer, now: f32) {
     start_puzzle(game, timer, now, puzzle);
 }
 
+/// Start a fresh game from the menu. Resets the running total, which otherwise
+/// accumulates across rounds (including "New Puzzle") within one game.
+fn begin_game(game: &mut Game, timer: &mut ViewTimer, now: f32, entry: &TargetEntry) {
+    game.total_score = 0;
+    if game.mode == Mode::Custom {
+        deal_custom(game, timer, now, entry);
+    } else {
+        deal(game, timer, now);
+    }
+}
+
 /// Custom start: use the typed target if there is one, otherwise random.
 fn deal_custom(game: &mut Game, timer: &mut ViewTimer, now: f32, entry: &TargetEntry) {
     let puzzle = match entry.value() {
@@ -673,6 +684,7 @@ fn difficulty_buttons(
     interactions: Query<(&Interaction, &DifficultyButton), Changed<Interaction>>,
     mut game: ResMut<Game>,
     mut timer: ResMut<ViewTimer>,
+    entry: Res<TargetEntry>,
     time: Res<Time>,
     mut next: ResMut<NextState<Screen>>,
 ) {
@@ -682,7 +694,7 @@ fn difficulty_buttons(
             if game.mode == Mode::Custom {
                 next.set(Screen::TargetSelect);
             } else {
-                deal(&mut game, &mut timer, time.elapsed_secs());
+                begin_game(&mut game, &mut timer, time.elapsed_secs(), &entry);
                 next.set(Screen::Playing);
             }
         }
@@ -718,7 +730,7 @@ fn start_button(
     mut next: ResMut<NextState<Screen>>,
 ) {
     if pressed(&interactions) {
-        deal_custom(&mut game, &mut timer, time.elapsed_secs(), &entry);
+        begin_game(&mut game, &mut timer, time.elapsed_secs(), &entry);
         next.set(Screen::Playing);
     }
 }
@@ -919,5 +931,28 @@ fn set_text(texts: &mut Query<&mut Text>, entity: Entity, value: String) {
 fn set_display(nodes: &mut Query<&mut Node>, entity: Entity, value: Display) {
     if let Ok(mut node) = nodes.get_mut(entity) {
         node.display = value;
+    }
+}
+
+#[cfg(test)]
+mod game_tests {
+    use super::*;
+
+    #[test]
+    fn starting_a_new_game_resets_the_running_total() {
+        let mut game = Game::new();
+        let mut timer = ViewTimer::default();
+        game.total_score = 123;
+        begin_game(&mut game, &mut timer, 0.0, &TargetEntry::default());
+        assert_eq!(game.total_score, 0);
+    }
+
+    #[test]
+    fn new_puzzle_keeps_the_running_total() {
+        let mut game = Game::new();
+        let mut timer = ViewTimer::default();
+        game.total_score = 123;
+        deal(&mut game, &mut timer, 0.0);
+        assert_eq!(game.total_score, 123);
     }
 }

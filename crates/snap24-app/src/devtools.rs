@@ -20,7 +20,7 @@
 //! reproducible deal.
 
 use crate::logic::Op;
-use crate::{deal, deal_custom, Game, Screen, TargetEntry, ViewTimer};
+use crate::{begin_game, Game, Screen, TargetEntry, ViewTimer};
 use bevy::prelude::*;
 use bevy::render::view::screenshot::{save_to_disk, Screenshot};
 use snap24_core::{Difficulty, Mode};
@@ -164,14 +164,14 @@ fn run_script(
             if game.mode == Mode::Custom {
                 next.set(Screen::TargetSelect);
             } else {
-                deal(&mut game, &mut timer, time.elapsed_secs());
+                begin_game(&mut game, &mut timer, time.elapsed_secs(), &entry);
                 next.set(Screen::Playing);
             }
         }
         Step::Card(index) => game.play_card(index),
         Step::Op(op) => game.play_op(op),
         Step::Undo => game.undo(),
-        Step::New => deal(&mut game, &mut timer, time.elapsed_secs()),
+        Step::New => crate::deal(&mut game, &mut timer, time.elapsed_secs()),
         Step::Menu => next.set(Screen::ModeSelect),
         Step::Target(value) => {
             entry.clear();
@@ -184,11 +184,7 @@ fn run_script(
             }
         }
         Step::Start => {
-            if game.mode == Mode::Custom {
-                deal_custom(&mut game, &mut timer, time.elapsed_secs(), &entry);
-            } else {
-                deal(&mut game, &mut timer, time.elapsed_secs());
-            }
+            begin_game(&mut game, &mut timer, time.elapsed_secs(), &entry);
             next.set(Screen::Playing);
         }
         Step::Back => next.set(match screen.get() {

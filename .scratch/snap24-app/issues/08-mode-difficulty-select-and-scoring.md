@@ -14,7 +14,7 @@
 **Notes / decisions:**
 
 - Bevy `States` screen flow: `Title → ModeSelect → DifficultySelect → Playing`, with a Back button that walks back up (and a "Menu" button from Playing). `ScreenRoot` entities are despawned on `OnExit` so each screen starts clean. The dev number-key tier shortcuts from 07 are gone; tiers are picked on the Difficulty screen.
-- Board header shows `Target: N  (Mode · Tier)`; result/score line shows `Round score: +X  Total: Y`, and only the total otherwise. Total persists in the `Game` resource across rounds and screens for the session.
+- Board header shows `Target: N  (Mode · Tier)`; result/score line shows `Round score: +X  Total: Y`, and only the total otherwise. The total accumulates across rounds within one game (including "New Puzzle"), and **resets to 0 when a fresh game starts from the menu** (`begin_game`), so leaving and starting again does not carry the old score. Covered by `game_tests` in `main.rs`.
 - Shared labels/multipliers live on the core enums (`Difficulty::label`, `Difficulty::score_multiplier`, `Mode::label`) so the plugin track can reuse them. Multipliers: Easy 1, Medium 2, Hard 3, Expert 4, Insane 5, Blind 8.
 - **Scoring model (decided, `logic::round_score`):** a loss scores 0; a win scores `multiplier * 100 + max(0, 90 - elapsed) * 2 - hints * 30`, floored at 0. Constants `BASE_SCORE = 100`, `PAR_SECONDS = 90`, `TIME_BONUS_PER_SECOND = 2`, `HINT_PENALTY = 30`. The hint term is wired and tested now but `hints_used` stays 0 until ticket 09.
 - `cargo test -p snap24-app` = 26 tests (scoring included), clippy clean, launches.
