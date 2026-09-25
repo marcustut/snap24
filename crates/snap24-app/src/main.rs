@@ -16,11 +16,17 @@ mod logic;
 mod devtools;
 
 use bevy::color::Mix;
+use bevy::input_focus::tab_navigation::{TabIndex, TabNavigationPlugin};
+use bevy::picking::hover::Hovered;
 use bevy::prelude::*;
+use bevy::ui_widgets::{
+    observe, slider_self_update, Slider, SliderOrientation, SliderRange, SliderStep, SliderThumb,
+    SliderValue, TrackClick,
+};
 use logic::{round_score, MergeError, Op, Phase, Round, Suit, ViewPhase};
 use snap24_core::{
-    evaluate, first_move, generate, generate_targeted, move_sequence, solutions_infix, Difficulty,
-    Mode, Puzzle, Rational, Rng,
+    evaluate, first_move, generate, generate_targeted, move_sequence, solutions_infix,
+    solutions_steps, Difficulty, Mode, Move, Puzzle, Rational, Rng,
 };
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -99,6 +105,9 @@ struct Game {
     hints_used: u32,
     hint_level: u32,
     message: String,
+    /// How many reveal solutions are currently shown, and how many exist.
+    reveal_shown: usize,
+    reveal_total: usize,
     started_at: f32,
     settled: bool,
     last_score: Option<i32>,
@@ -117,6 +126,8 @@ impl Game {
             hints_used: 0,
             hint_level: 0,
             message: String::new(),
+            reveal_shown: 0,
+            reveal_total: 0,
             started_at: 0.0,
             settled: false,
             last_score: None,
@@ -187,11 +198,13 @@ impl Default for ViewTimer {
 struct BoardUi {
     target: Entity,
     countdown: Entity,
+    countdown_pill: Entity,
     status: Entity,
     score: Entity,
     message: Entity,
     undo: Entity,
     undo_label: Entity,
+    more: Entity,
     cards: [Entity; MAX_CARDS],
     ranks: [Entity; MAX_CARDS],
     suits: [Entity; MAX_CARDS],
@@ -210,6 +223,8 @@ fn start_puzzle(game: &mut Game, timer: &mut ViewTimer, now: f32, puzzle: Puzzle
     game.hints_used = 0;
     game.hint_level = 0;
     game.message = String::new();
+    game.reveal_shown = 0;
+    game.reveal_total = 0;
     game.started_at = now;
     game.settled = false;
     game.last_score = None;
@@ -276,7 +291,16 @@ struct PlayButton;
 struct ModeButton(Mode);
 
 #[derive(Component)]
-struct DifficultyButton(Difficulty);
+struct DifficultySlider;
+
+#[derive(Component)]
+struct DifficultyThumb;
+
+#[derive(Component)]
+struct DifficultyLabel;
+
+#[derive(Component)]
+struct DifficultyNextButton;
 
 #[derive(Component)]
 struct BackButton;
@@ -307,6 +331,9 @@ struct RandomTargetButton;
 
 #[derive(Component)]
 struct StartButton;
+
+#[derive(Component)]
+struct ShowMoreButton;
 
 #[derive(Component)]
 struct TargetLabel;
@@ -343,6 +370,7 @@ struct FxPrev {
 
 fn main() {
     let mut app = App::new();
+    app.add_plugins(TabNavigationPlugin);
     app.add_plugins(DefaultPlugins.set(WindowPlugin {
         primary_window: Some(Window {
             title: "Snap 24".to_string(),
@@ -371,7 +399,9 @@ fn main() {
             (
                 play_button,
                 mode_buttons,
-                difficulty_buttons,
+                difficulty_slider_changed,
+                move_difficulty_thumb,
+                difficulty_next,
                 digit_buttons,
                 random_target_button,
                 start_button,
@@ -391,6 +421,7 @@ fn main() {
                 undo_click,
                 hint_button,
                 reveal_button,
+                show_more_button,
                 new_puzzle,
                 fx_system,
                 settle_round,
@@ -461,7 +492,12 @@ fn button<M: Bundle>(parent: &mut ChildSpawnerCommands, label: &str, marker: M) 
     button_width(parent, label, marker, 180.0);
 }
 
-fn button_width<M: Bundle>(parent: &mut ChildSpawnerCommands, label: &str, marker: M, min_width: f32) {
+fn button_width<M: Bundle>(
+    parent: &mut ChildSpawnerCommands,
+    label: &str,
+    marker: M,
+    min_width: f32,
+) -> Entity {
     parent
         .spawn((
             Button,
@@ -487,7 +523,8 @@ fn button_width<M: Bundle>(parent: &mut ChildSpawnerCommands, label: &str, marke
                 },
                 TextColor(TEXT),
             ));
-        });
+        })
+        .id()
 }
 
 /// A framed panel that menu content sits inside.
@@ -545,14 +582,89 @@ fn spawn_mode_select(mut commands: Commands) {
     });
 }
 
-fn spawn_difficulty_select(mut commands: Commands) {
+fn spawn_difficulty_select(mut commands: Commands, game: Res<Game>) {
     let root = root(&mut commands);
+    let start = Difficulty::ALL
+        .iter()
+        .position(|tier| *tier == game.difficulty)
+        .unwrap_or(0) as f32;
+    let label = game.difficulty.label();
     commands.entity(root).with_children(|ui| {
         panel(ui, |p| {
             heading(p, "Choose difficulty", 40.0);
-            for difficulty in Difficulty::ALL {
-                button(p, difficulty.label(), DifficultyButton(difficulty));
-            }
+            p.spawn((
+                DifficultyLabel,
+                Text::new(label),
+                TextFont {
+                    font_size: FontSize::Px(28.0),
+                    ..default()
+                },
+                TextColor(GOLD),
+            ));
+            p.spawn(Node {
+                width: percent(100),
+                height: px(36),
+                align_items: AlignItems::Center,
+                justify_content: JustifyContent::Center,
+                ..default()
+            })
+            .with_children(|row| {
+                row.spawn((
+                    DifficultySlider,
+                    Hovered::default(),
+                    Node {
+                        width: px(420),
+                        height: px(24),
+                        flex_direction: FlexDirection::Column,
+                        justify_content: JustifyContent::Center,
+                        align_items: AlignItems::Stretch,
+                        ..default()
+                    },
+                    Slider {
+                        track_click: TrackClick::Snap,
+                        orientation: SliderOrientation::Horizontal,
+                    },
+                    SliderValue(start),
+                    SliderRange::new(0.0, (Difficulty::ALL.len() - 1) as f32),
+                    SliderStep(1.0),
+                    TabIndex(0),
+                    observe(slider_self_update),
+                    Children::spawn((
+                        Spawn((
+                            Node {
+                                height: px(8),
+                                border_radius: BorderRadius::all(px(4)),
+                                ..default()
+                            },
+                            BackgroundColor(KEY),
+                        )),
+                        Spawn((
+                            Node {
+                                position_type: PositionType::Absolute,
+                                left: px(0),
+                                right: px(18),
+                                top: px(0),
+                                bottom: px(0),
+                                ..default()
+                            },
+                            children![(
+                                DifficultyThumb,
+                                SliderThumb,
+                                Node {
+                                    width: px(22),
+                                    height: px(22),
+                                    position_type: PositionType::Absolute,
+                                    left: percent(0),
+                                    border_radius: BorderRadius::MAX,
+                                    ..default()
+                                },
+                                BackgroundColor(GOLD),
+                            )],
+                        )),
+                    )),
+                ));
+            });
+            button(p, "Next", DifficultyNextButton);
             button(p, "Back", BackButton);
         });
     });
@@ -612,11 +724,13 @@ fn spawn_target_select(mut commands: Commands) {
 fn spawn_board(mut commands: Commands) {
     let mut target = Entity::PLACEHOLDER;
     let mut countdown = Entity::PLACEHOLDER;
+    let mut countdown_pill = Entity::PLACEHOLDER;
     let mut status = Entity::PLACEHOLDER;
     let mut score = Entity::PLACEHOLDER;
     let mut message = Entity::PLACEHOLDER;
     let mut undo = Entity::PLACEHOLDER;
     let mut undo_label = Entity::PLACEHOLDER;
+    let mut more = Entity::PLACEHOLDER;
     let mut cards = [Entity::PLACEHOLDER; MAX_CARDS];
     let mut ranks = [Entity::PLACEHOLDER; MAX_CARDS];
     let mut suits = [Entity::PLACEHOLDER; MAX_CARDS];
@@ -648,20 +762,24 @@ fn spawn_board(mut commands: Commands) {
             .with_children(|ui| {
                 target = text_entity(ui, 48.0, TEXT);
                 // Timer reads as a thin outlined pill, like a game HUD chip.
-                ui.spawn((
-                    Node {
-                        border: UiRect::all(px(2)),
-                        border_radius: BorderRadius::MAX,
-                        padding: UiRect::axes(px(20), px(6)),
-                        min_width: px(140),
-                        justify_content: JustifyContent::Center,
-                        ..default()
-                    },
-                    BorderColor::all(GREEN),
-                ))
-                .with_children(|pill| {
-                    countdown = text_entity(pill, 22.0, GREEN);
-                });
+                // Hidden entirely when there is no countdown (Easy, Blind, or
+                // after the window has expired).
+                countdown_pill = ui
+                    .spawn((
+                        Node {
+                            border: UiRect::all(px(2)),
+                            border_radius: BorderRadius::MAX,
+                            padding: UiRect::axes(px(20), px(6)),
+                            min_width: px(140),
+                            justify_content: JustifyContent::Center,
+                            ..default()
+                        },
+                        BorderColor::all(GREEN),
+                    ))
+                    .with_children(|pill| {
+                        countdown = text_entity(pill, 22.0, GREEN);
+                    })
+                    .id();
 
                 ui.spawn(Node {
                     flex_direction: FlexDirection::Row,
@@ -759,6 +877,7 @@ fn spawn_board(mut commands: Commands) {
                 .with_children(|row| {
                     button_width(row, "Hint", HintButton, 120.0);
                     button_width(row, "Reveal", RevealButton, 120.0);
+                    more = button_width(row, "More", ShowMoreButton, 120.0);
                     undo = row
                         .spawn((
                             Button,
@@ -787,11 +906,13 @@ fn spawn_board(mut commands: Commands) {
     commands.insert_resource(BoardUi {
         target,
         countdown,
+        countdown_pill,
         status,
         score,
         message,
         undo,
         undo_label,
+        more,
         cards,
         ranks,
         suits,
@@ -838,24 +959,49 @@ fn mode_buttons(
     }
 }
 
-fn difficulty_buttons(
-    interactions: Query<(&Interaction, &DifficultyButton), Changed<Interaction>>,
+fn difficulty_slider_changed(
+    sliders: Query<&SliderValue, (Changed<SliderValue>, With<DifficultySlider>)>,
+    mut game: ResMut<Game>,
+    mut labels: Query<&mut Text, With<DifficultyLabel>>,
+) {
+    for value in &sliders {
+        let index = value.0.round().clamp(0.0, (Difficulty::ALL.len() - 1) as f32) as usize;
+        game.difficulty = Difficulty::ALL[index];
+        let name = game.difficulty.label();
+        for mut label in &mut labels {
+            **label = name.to_string();
+        }
+    }
+}
+
+fn move_difficulty_thumb(
+    sliders: Query<(&SliderValue, &SliderRange), With<DifficultySlider>>,
+    mut thumbs: Query<&mut Node, With<DifficultyThumb>>,
+) {
+    for (value, range) in &sliders {
+        let percent = range.thumb_position(value.0) * 100.0;
+        for mut thumb in &mut thumbs {
+            thumb.left = bevy::ui::Val::Percent(percent);
+        }
+    }
+}
+
+fn difficulty_next(
+    interactions: Query<&Interaction, (Changed<Interaction>, With<DifficultyNextButton>)>,
     mut game: ResMut<Game>,
     mut timer: ResMut<ViewTimer>,
     entry: Res<TargetEntry>,
     time: Res<Time>,
     mut next: ResMut<NextState<Screen>>,
 ) {
-    for (interaction, difficulty) in &interactions {
-        if *interaction == Interaction::Pressed {
-            game.difficulty = difficulty.0;
-            if game.mode == Mode::Custom {
-                next.set(Screen::TargetSelect);
-            } else {
-                begin_game(&mut game, &mut timer, time.elapsed_secs(), &entry);
-                next.set(Screen::Playing);
-            }
-        }
+    if !pressed(&interactions) {
+        return;
+    }
+    if game.mode == Mode::Custom {
+        next.set(Screen::TargetSelect);
+    } else {
+        begin_game(&mut game, &mut timer, time.elapsed_secs(), &entry);
+        next.set(Screen::Playing);
     }
 }
 
@@ -1126,30 +1272,32 @@ fn hint_text(game: &Game) -> String {
     }
 }
 
-/// Distinct solutions for the original puzzle, each re-checked through the
-/// evaluator before it is shown.
-fn reveal_text(game: &Game) -> String {
+/// All solutions for the original puzzle as step sequences, after checking each
+/// one back through the evaluator.
+fn reveal_solutions(game: &Game) -> Vec<Vec<Move>> {
     let cards: Vec<Rational> = game.dealt.iter().copied().map(Rational::from).collect();
     let target = game.round.target;
-    let valid: Vec<String> = solutions_infix(&cards, target)
+    let infix = solutions_infix(&cards, target);
+    let steps = solutions_steps(&cards, target);
+    steps
         .into_iter()
-        .filter(|infix| evaluate(&game.dealt, infix).map(|value| value == target) == Ok(true))
-        .collect();
-    match valid.len() {
-        0 => "No solutions to reveal.".to_string(),
-        count => {
-            let shown: Vec<&String> = valid.iter().take(4).collect();
-            let more = if count > shown.len() {
-                format!("   (+{} more)", count - shown.len())
-            } else {
-                String::new()
-            };
-            format!(
-                "{count} solution(s):  {}{more}",
-                shown.iter().map(|s| s.as_str()).collect::<Vec<_>>().join("   ")
-            )
-        }
+        .zip(infix)
+        .filter(|(_, infix)| evaluate(&game.dealt, infix).map(|value| value == target) == Ok(true))
+        .map(|(steps, _)| steps)
+        .collect()
+}
+
+fn format_solution(solutions: &[Vec<Move>], shown: usize) -> String {
+    if solutions.is_empty() {
+        return "No solutions to reveal.".to_string();
     }
+    let index = shown.clamp(1, solutions.len());
+    let body = solutions[index - 1]
+        .iter()
+        .map(|step| format!("{} {} {} = {}", step.left, step.op, step.right, step.result))
+        .collect::<Vec<_>>()
+        .join("   ");
+    format!("Solution {index}/{}:   {body}", solutions.len())
 }
 
 fn hint_button(
@@ -1168,9 +1316,25 @@ fn reveal_button(
     mut game: ResMut<Game>,
     interactions: Query<&Interaction, (Changed<Interaction>, With<RevealButton>)>,
 ) {
-    if pressed(&interactions) {
-        game.message = reveal_text(&game);
+    if !pressed(&interactions) {
+        return;
     }
+    let solutions = reveal_solutions(&game);
+    game.reveal_total = solutions.len();
+    game.reveal_shown = usize::from(!solutions.is_empty());
+    game.message = format_solution(&solutions, game.reveal_shown);
+}
+
+fn show_more_button(
+    mut game: ResMut<Game>,
+    interactions: Query<&Interaction, (Changed<Interaction>, With<ShowMoreButton>)>,
+) {
+    if !pressed(&interactions) || game.reveal_shown >= game.reveal_total {
+        return;
+    }
+    game.reveal_shown += 1;
+    let solutions = reveal_solutions(&game);
+    game.message = format_solution(&solutions, game.reveal_shown);
 }
 
 fn new_puzzle(
@@ -1293,14 +1457,43 @@ fn update_board(
     if let Ok(mut color) = text_colors.get_mut(ui.undo_label) {
         *color = TextColor(if undo_enabled { TEXT } else { MUTED });
     }
+
+    // "More" appears only when a reveal has additional solutions waiting.
+    let more_display = if game.reveal_shown > 0 && game.reveal_shown < game.reveal_total {
+        Display::Flex
+    } else {
+        Display::None
+    };
+    if let Ok(mut node) = nodes.get_mut(ui.more)
+        && node.display != more_display
+    {
+        node.display = more_display;
+    }
 }
 
-fn update_countdown(timer: Res<ViewTimer>, ui: Res<BoardUi>, mut texts: Query<&mut Text>) {
+fn update_countdown(
+    timer: Res<ViewTimer>,
+    ui: Res<BoardUi>,
+    mut texts: Query<&mut Text>,
+    mut nodes: Query<&mut Node>,
+) {
     let text = match timer.phase.seconds_left() {
-        Some(seconds) => format!("Remember! Hiding in {seconds}s"),
+        Some(seconds) => format!("Hiding in {seconds}s"),
         None => String::new(),
     };
     set_text(&mut texts, ui.countdown, text);
+
+    // Only show the pill while a countdown is actually running.
+    let display = if timer.phase.seconds_left().is_some() {
+        Display::Flex
+    } else {
+        Display::None
+    };
+    if let Ok(mut node) = nodes.get_mut(ui.countdown_pill)
+        && node.display != display
+    {
+        node.display = display;
+    }
 }
 
 fn set_text(texts: &mut Query<&mut Text>, entity: Entity, value: String) {

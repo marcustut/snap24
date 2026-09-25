@@ -227,7 +227,58 @@ impl Expr {
         }
     }
 
-    #[cfg(test)]
+    /// The step-by-step merges that evaluate this tree, in an order a player
+    /// could follow (`a op b = result`, repeatedly).
+    fn steps(&self) -> Vec<Move> {
+        match self {
+            Expr::Leaf(_) => Vec::new(),
+            Expr::Nary { op, children } => {
+                let mut out = Vec::new();
+                let mut iter = children.iter();
+                let Some(first) = iter.next() else {
+                    return out;
+                };
+                out.extend(first.steps());
+                let mut acc = first.value();
+                for child in iter {
+                    out.extend(child.steps());
+                    let right = child.value();
+                    let result = match op {
+                        Op::Add => acc.add(right),
+                        Op::Mul => acc.mul(right),
+                        _ => unreachable!("n-ary nodes are + or *"),
+                    };
+                    out.push(Move {
+                        left: acc,
+                        right,
+                        op: op.symbol(),
+                        result,
+                    });
+                    acc = result;
+                }
+                out
+            }
+            Expr::Bin { op, left, right } => {
+                let mut out = left.steps();
+                out.extend(right.steps());
+                let l = left.value();
+                let r = right.value();
+                let result = match op {
+                    Op::Sub => l.sub(r),
+                    Op::Div => l.div(r).expect("division by zero"),
+                    _ => unreachable!("binary nodes are - or /"),
+                };
+                out.push(Move {
+                    left: l,
+                    right: r,
+                    op: op.symbol(),
+                    result,
+                });
+                out
+            }
+        }
+    }
+
     fn value(&self) -> Rational {
         match self {
             Expr::Leaf(v) => *v,
@@ -470,6 +521,14 @@ pub fn solutions_infix(cards: &[Rational], target: Rational) -> Vec<String> {
         .collect()
 }
 
+/// Distinct solutions as step-by-step moves, the way a player would read them.
+pub fn solutions_steps(cards: &[Rational], target: Rational) -> Vec<Vec<Move>> {
+    solve_exprs(cards, target)
+        .iter()
+        .map(|e| e.steps())
+        .collect()
+}
+
 /// One move: combine `left` and `right` with `op` to get `result`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Move {
@@ -638,6 +697,25 @@ mod tests {
             for infix in &solutions {
                 assert_eq!(evaluate(cards, infix), Ok(*target), "revalidate {infix:?}");
             }
+        }
+    }
+
+    #[test]
+    fn solution_steps_are_valid_step_by_step() {
+        let cards = values(&[1, 1, 1, 1, 8]);
+        let target = Rational::from(24);
+        let solutions = solutions_steps(&cards, target);
+        assert_eq!(solutions.len(), solve(&[1, 1, 1, 1, 8], 24).len());
+        for steps in &solutions {
+            assert_eq!(steps.len(), 4);
+            let mut current = cards.clone();
+            for step in steps {
+                assert_eq!(apply(step.left, step.right, step.op), Some(step.result));
+                remove_one(&mut current, step.left);
+                remove_one(&mut current, step.right);
+                current.push(step.result);
+            }
+            assert_eq!(current, vec![target]);
         }
     }
 

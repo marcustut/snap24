@@ -21,7 +21,7 @@
 
 use crate::logic::{Op, Phase};
 use crate::{
-    begin_game, hint_text, reveal_text, Game, Screen, TargetEntry, ViewTimer,
+    begin_game, format_solution, hint_text, reveal_solutions, Game, Screen, TargetEntry, ViewTimer,
 };
 use bevy::prelude::*;
 use bevy::render::view::screenshot::{save_to_disk, Screenshot};
@@ -75,6 +75,7 @@ enum Step {
     Start,
     Hint,
     Reveal,
+    More,
     Wait(u32),
     Shot(String),
 }
@@ -115,6 +116,7 @@ fn parse(script: &str) -> Vec<Step> {
             ("start", _) => steps.push(Step::Start),
             ("hint", _) => steps.push(Step::Hint),
             ("reveal", _) => steps.push(Step::Reveal),
+            ("more", _) => steps.push(Step::More),
             ("menu", _) => steps.push(Step::Menu),
             ("back", _) => steps.push(Step::Back),
             ("wait", Some(value)) => steps.push(Step::Wait(value.parse().unwrap_or(1))),
@@ -184,7 +186,20 @@ fn run_script(
                 game.message = hint_text(&game);
             }
         }
-        Step::Reveal => game.message = reveal_text(&game),
+        Step::Reveal => {
+            let solutions = reveal_solutions(&game);
+            game.reveal_total = solutions.len();
+            game.reveal_shown = usize::from(!solutions.is_empty());
+            game.message = format_solution(&solutions, game.reveal_shown);
+        }
+        Step::More => {
+            if game.reveal_shown < game.reveal_total {
+                game.reveal_shown += 1;
+            }
+            let solutions = reveal_solutions(&game);
+            game.reveal_total = solutions.len();
+            game.message = format_solution(&solutions, game.reveal_shown);
+        }
         Step::New => crate::deal(&mut game, &mut timer, time.elapsed_secs()),
         Step::Menu => next.set(Screen::ModeSelect),
         Step::Target(value) => {
