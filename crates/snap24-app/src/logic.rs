@@ -30,6 +30,33 @@ impl Op {
     }
 }
 
+/// A card suit. Cosmetic only — it never affects the maths; it exists so dealt
+/// cards look like real poker cards.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum Suit {
+    Spade,
+    Heart,
+    Diamond,
+    Club,
+}
+
+impl Suit {
+    pub const ALL: [Suit; 4] = [Suit::Spade, Suit::Heart, Suit::Diamond, Suit::Club];
+
+    pub fn glyph(self) -> &'static str {
+        match self {
+            Suit::Spade => "♠",
+            Suit::Heart => "♥",
+            Suit::Diamond => "♦",
+            Suit::Club => "♣",
+        }
+    }
+
+    pub fn is_red(self) -> bool {
+        matches!(self, Suit::Heart | Suit::Diamond)
+    }
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Phase {
     Playing,
@@ -88,6 +115,7 @@ impl ViewPhase {
 #[derive(Clone, Debug, PartialEq, Eq)]
 struct Snapshot {
     cards: Vec<Rational>,
+    suits: Vec<Option<Suit>>,
     revealed: Vec<bool>,
     first: Option<usize>,
     op: Option<Op>,
@@ -101,6 +129,9 @@ struct Snapshot {
 pub struct Round {
     pub target: Rational,
     pub cards: Vec<Rational>,
+    /// Cosmetic suit per card; `None` for merged values (which are tokens, not
+    /// cards). Parallel to `cards`.
+    pub suits: Vec<Option<Suit>>,
     /// Whether each card is currently face-up. Parallel to `cards`.
     pub revealed: Vec<bool>,
     /// Index of the first operand, if one has been tapped.
@@ -114,16 +145,37 @@ pub struct Round {
 impl Round {
     pub fn new(cards: Vec<i64>, target: Rational) -> Self {
         let cards: Vec<Rational> = cards.into_iter().map(Rational::from).collect();
+        // Spread suits across the hand (a real deck never has two identical
+        // cards). Mixing the rank into the choice keeps a hand of distinct
+        // ranks from coming out all one suit; the per-rank counter keeps
+        // duplicates of a rank on different suits.
+        let mut seen: std::collections::HashMap<i64, usize> = std::collections::HashMap::new();
+        let suits = cards
+            .iter()
+            .map(|card| {
+                let rank = card.as_i64().unwrap_or(0);
+                let count = seen.entry(rank).or_insert(0);
+                let suit = Suit::ALL[(rank as usize + *count) % Suit::ALL.len()];
+                *count += 1;
+                Some(suit)
+            })
+            .collect();
         let revealed = vec![true; cards.len()];
         Round {
             target,
             cards,
+            suits,
             revealed,
             first: None,
             op: None,
             phase: Phase::Playing,
             history: Vec::new(),
         }
+    }
+
+    /// The suit shown on card `index`, or `None` if it is a merged value.
+    pub fn suit(&self, index: usize) -> Option<Suit> {
+        self.suits.get(index).copied().flatten()
     }
 
     /// Flip every card face-down (timer expiry, or the Blind tier from the
@@ -147,6 +199,7 @@ impl Round {
         match self.history.pop() {
             Some(snapshot) => {
                 self.cards = snapshot.cards;
+                self.suits = snapshot.suits;
                 self.revealed = snapshot.revealed;
                 self.first = snapshot.first;
                 self.op = snapshot.op;
@@ -164,6 +217,7 @@ impl Round {
     fn push_history(&mut self) {
         self.history.push(Snapshot {
             cards: self.cards.clone(),
+            suits: self.suits.clone(),
             revealed: self.revealed.clone(),
             first: self.first,
             op: self.op,
@@ -240,6 +294,10 @@ impl Round {
         self.cards.remove(high);
         self.cards.remove(low);
         self.cards.insert(low, value);
+        // The result is a computed value, not a card, so it has no suit.
+        self.suits.remove(high);
+        self.suits.remove(low);
+        self.suits.insert(low, None);
         // Agreed reveal rule: the computed merge result is always shown, even
         // when the operands were face-down. The other cards keep their state.
         self.revealed.remove(high);
@@ -314,6 +372,35 @@ mod tests {
         assert_eq!(Round::label(&Rational::from(13)), "K");
         assert_eq!(Round::label(&Rational::from(24)), "24");
         assert_eq!(Round::label(&Rational::new(3, 2)), "3/2");
+    }
+
+    #[test]
+    fn copies_of_a_rank_get_four_distinct_suits() {
+        let r = round(&[5, 5, 5, 5, 3], 24);
+        let suits: Vec<Suit> = r.suits.iter().map(|s| s.expect("dealt cards have suits")).collect();
+        let four_fives: std::collections::HashSet<Suit> = suits[..4].iter().copied().collect();
+        assert_eq!(four_fives.len(), 4, "duplicate ranks must be different suits");
+        assert_eq!(r.suit(4), Some(Suit::ALL[3]));
+    }
+
+    #[test]
+    fn a_hand_of_distinct_ranks_is_not_all_one_suit() {
+        let r = round(&[10, 12, 13, 8, 11], 24);
+        let suits: std::collections::HashSet<Suit> =
+            r.suits.iter().map(|s| s.unwrap()).collect();
+        assert!(suits.len() > 1, "suits should vary across a hand");
+    }
+
+    #[test]
+    fn merged_values_have_no_suit_and_undo_restores_them() {
+        let mut r = round(&[9, 4], 5);
+        r.click_card(0).unwrap();
+        r.click_op(Op::Sub).unwrap();
+        r.click_card(1).unwrap();
+        assert_eq!(r.suits, vec![None]);
+        assert!(r.undo());
+        assert_eq!(r.suits.len(), 2);
+        assert!(r.suits.iter().all(Option::is_some));
     }
 
     #[test]
