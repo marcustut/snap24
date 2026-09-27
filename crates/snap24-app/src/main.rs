@@ -940,14 +940,29 @@ fn spawn_board(mut commands: Commands, fonts: Res<Fonts>) {
                     .id();
 
                 // Target: tracked label on the left, big numeral on the right.
+                // The label is padded up so it sits on the numeral's baseline.
                 ui.spawn(Node {
                     flex_direction: FlexDirection::Row,
-                    align_items: AlignItems::Baseline,
+                    align_items: AlignItems::FlexEnd,
                     column_gap: px(16),
                     ..default()
                 })
                 .with_children(|row| {
-                    text_body(row, "TARGET", 15.0, MUTED);
+                    row.spawn((
+                        Text::new("TARGET"),
+                        TextFont {
+                            font_size: FontSize::Px(15.0),
+                            ..default()
+                        },
+                        TextColor(MUTED),
+                        Node {
+                            padding: UiRect {
+                                bottom: px(18),
+                                ..default()
+                            },
+                            ..default()
+                        },
+                    ));
                     target = text_with(row, 96.0, TEXT, &display);
                 });
 
@@ -1540,6 +1555,7 @@ fn new_puzzle(
     }
 }
 
+#[allow(clippy::too_many_arguments)] // Bevy systems routinely take many params
 fn update_board(
     game: Res<Game>,
     ui: Option<Res<BoardUi>>,
@@ -1548,6 +1564,7 @@ fn update_board(
     mut backgrounds: Query<&mut BackgroundColor>,
     mut borders: Query<&mut BorderColor>,
     mut nodes: Query<&mut Node>,
+    mut transforms: Query<&mut UiTransform>,
 ) {
     let Some(ui) = ui else {
         return;
@@ -1636,6 +1653,11 @@ fn update_board(
                 // Only the selected card gets a ring; otherwise the border is
                 // invisible so ivory cards read as clean paper.
                 *border = BorderColor::all(if selected { GOLD } else { background });
+            }
+            // Lift the selected card so selection reads physically.
+            if let Ok(mut transform) = transforms.get_mut(slot) {
+                transform.translation =
+                    Val2::px(0.0, if selected { -14.0 } else { 0.0 });
             }
         } else {
             set_display(&mut nodes, slot, Display::None);
