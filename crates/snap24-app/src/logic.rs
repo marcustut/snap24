@@ -19,15 +19,6 @@ pub enum Op {
 
 impl Op {
     pub const ALL: [Op; 4] = [Op::Add, Op::Sub, Op::Mul, Op::Div];
-
-    pub fn symbol(self) -> char {
-        match self {
-            Op::Add => '+',
-            Op::Sub => '-',
-            Op::Mul => '*',
-            Op::Div => '/',
-        }
-    }
 }
 
 /// A card suit. Cosmetic only — it never affects the maths; it exists so dealt

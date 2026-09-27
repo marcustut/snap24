@@ -43,7 +43,6 @@ const BORDER: Color = Color::srgb(0.24, 0.20, 0.16);
 const TEXT: Color = Color::srgb(0.937, 0.906, 0.855);
 const MUTED: Color = Color::srgb(0.55, 0.50, 0.44);
 const GOLD: Color = Color::srgb(0.788, 0.635, 0.290);
-const GREEN: Color = GOLD;
 const WIN: Color = Color::srgb(0.788, 0.635, 0.290);
 const LOSE: Color = Color::srgb(0.698, 0.227, 0.180);
 
@@ -587,6 +586,63 @@ fn heading(parent: &mut ChildSpawnerCommands, text: &str, size: f32, font: &Hand
     ));
 }
 
+/// Wide-tracked uppercase, approximating the mockup's letterspacing (Bevy text
+/// has no letter-spacing property).
+fn tracked(text: &str) -> String {
+    text.to_uppercase()
+        .chars()
+        .map(|c| c.to_string())
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
+/// A static body-font text node (the default font is Space Grotesk).
+fn text_body(parent: &mut ChildSpawnerCommands, text: &str, size: f32, color: Color) -> Entity {
+    parent
+        .spawn((
+            Text::new(text),
+            TextFont {
+                font_size: FontSize::Px(size),
+                ..default()
+            },
+            TextColor(color),
+        ))
+        .id()
+}
+
+/// A borderless text control with a thin underline (the play-screen style).
+fn ghost_button(parent: &mut ChildSpawnerCommands, label: &str, marker: impl Bundle) -> Entity {
+    let mut label_entity = Entity::PLACEHOLDER;
+    ghost_button_id(parent, label, marker, &mut label_entity)
+}
+
+fn ghost_button_id(
+    parent: &mut ChildSpawnerCommands,
+    label: &str,
+    marker: impl Bundle,
+    label_out: &mut Entity,
+) -> Entity {
+    parent
+        .spawn((
+            Button,
+            marker,
+            Node {
+                padding: UiRect::axes(px(8), px(4)),
+                border: UiRect {
+                    bottom: px(1),
+                    ..default()
+                },
+                ..default()
+            },
+            BackgroundColor(BG),
+            BorderColor::all(MUTED),
+        ))
+        .with_children(|button| {
+            *label_out = text_body(button, label, 16.0, TEXT);
+        })
+        .id()
+}
+
 /// A static text node in a specific font.
 fn text_static(
     parent: &mut ChildSpawnerCommands,
@@ -840,48 +896,60 @@ fn spawn_board(mut commands: Commands, fonts: Res<Fonts>) {
                 ..default()
             })
             .with_children(|ui| {
-                // Top bar: wordmark on the left, mode · tier on the right.
+                // Top bar: two-tone wordmark left, tracked mode · tier right.
                 ui.spawn(Node {
                     width: percent(100),
                     justify_content: JustifyContent::SpaceBetween,
                     align_items: AlignItems::Center,
+                    padding: UiRect::axes(px(6), px(0)),
                     ..default()
                 })
                 .with_children(|bar| {
-                    text_static(bar, "SNAP 24", 22.0, TEXT, &display);
-                    mode_chip = text_entity(bar, 14.0, MUTED);
+                    bar.spawn(Node {
+                        flex_direction: FlexDirection::Row,
+                        column_gap: px(6),
+                        ..default()
+                    })
+                    .with_children(|mark| {
+                        text_static(mark, "SNAP", 28.0, TEXT, &display);
+                        text_static(mark, "24", 28.0, GOLD, &display);
+                    });
+                    mode_chip = text_entity(bar, 13.0, MUTED);
                 });
 
-                // Target: a small label and a large Fraunces numeral.
+                // Timer: tracked caps over a thin brass rule; hidden when idle.
+                countdown_pill = ui
+                    .spawn(Node {
+                        flex_direction: FlexDirection::Column,
+                        align_items: AlignItems::Center,
+                        row_gap: px(8),
+                        display: Display::None,
+                        ..default()
+                    })
+                    .with_children(|pill| {
+                        countdown = text_entity(pill, 15.0, GOLD);
+                        pill.spawn((
+                            Node {
+                                height: px(1),
+                                width: px(150),
+                                ..default()
+                            },
+                            BackgroundColor(GOLD),
+                        ));
+                    })
+                    .id();
+
+                // Target: tracked label on the left, big numeral on the right.
                 ui.spawn(Node {
                     flex_direction: FlexDirection::Row,
                     align_items: AlignItems::Baseline,
-                    column_gap: px(14),
+                    column_gap: px(16),
                     ..default()
                 })
                 .with_children(|row| {
-                    text_static(row, "Target", 16.0, GOLD, &display);
-                    target = text_with(row, 84.0, TEXT, &display);
+                    text_body(row, "TARGET", 15.0, MUTED);
+                    target = text_with(row, 96.0, TEXT, &display);
                 });
-                // Timer reads as a thin outlined pill, like a game HUD chip.
-                // Hidden entirely when there is no countdown (Easy, Blind, or
-                // after the window has expired).
-                countdown_pill = ui
-                    .spawn((
-                        Node {
-                            border: UiRect::ZERO,
-                            border_radius: BorderRadius::MAX,
-                            padding: UiRect::axes(px(0), px(4)),
-                            min_width: px(140),
-                            justify_content: JustifyContent::Center,
-                            ..default()
-                        },
-                        BorderColor::all(GOLD),
-                    ))
-                    .with_children(|pill| {
-                        countdown = text_entity(pill, 22.0, GREEN);
-                    })
-                    .id();
 
                 ui.spawn(Node {
                     flex_direction: FlexDirection::Row,
@@ -897,15 +965,15 @@ fn spawn_board(mut commands: Commands, fonts: Res<Fonts>) {
                                 Button,
                                 CardButton(index),
                                 Node {
-                                    width: px(108),
-                                    height: px(150),
+                                    width: px(116),
+                                    height: px(160),
                                     flex_direction: FlexDirection::Column,
                                     justify_content: JustifyContent::FlexStart,
                                     align_items: AlignItems::FlexStart,
-                                    padding: UiRect::axes(px(12), px(10)),
+                                    padding: UiRect::axes(px(14), px(12)),
                                     row_gap: px(2),
                                     border: UiRect::all(px(2)),
-                                    border_radius: BorderRadius::all(px(18)),
+                                    border_radius: BorderRadius::all(px(22)),
                                     ..default()
                                 },
                                 BackgroundColor(CARD),
@@ -978,8 +1046,8 @@ fn spawn_board(mut commands: Commands, fonts: Res<Fonts>) {
                     }
                 });
 
-                status = text_entity(ui, 24.0, MUTED);
-                score = text_entity(ui, 22.0, MUTED);
+                status = text_entity(ui, 21.0, TEXT);
+                score = text_entity(ui, 13.0, MUTED);
                 message = ui
                     .spawn((
                         Text::new(""),
@@ -1003,30 +1071,12 @@ fn spawn_board(mut commands: Commands, fonts: Res<Fonts>) {
                     ..default()
                 })
                 .with_children(|row| {
-                    button_width(row, "Hint", HintButton, 120.0);
-                    button_width(row, "Reveal", RevealButton, 120.0);
-                    more = button_width(row, "More", ShowMoreButton, 120.0);
-                    undo = row
-                        .spawn((
-                            Button,
-                            UndoButton,
-                            Node {
-                                padding: UiRect::axes(px(24), px(16)),
-                                border: UiRect::ZERO,
-                                border_radius: BorderRadius::MAX,
-                                min_width: px(120),
-                                justify_content: JustifyContent::Center,
-                                ..default()
-                            },
-                            BackgroundColor(KEY),
-                            BorderColor::all(KEY),
-                        ))
-                        .with_children(|button| {
-                            undo_label = text_entity(button, 24.0, TEXT);
-                        })
-                        .id();
-                    button(row, "New Puzzle", NewPuzzleButton);
-                    button(row, "Menu", BackButton);
+                    ghost_button(row, "Hint", HintButton);
+                    ghost_button(row, "Reveal", RevealButton);
+                    more = ghost_button(row, "More", ShowMoreButton);
+                    undo = ghost_button_id(row, "Undo", UndoButton, &mut undo_label);
+                    ghost_button(row, "New Puzzle", NewPuzzleButton);
+                    ghost_button(row, "Menu", BackButton);
                 });
             });
         });
@@ -1203,6 +1253,16 @@ fn pressed<F: bevy::ecs::query::QueryFilter>(query: &Query<&Interaction, F>) -> 
 // --------------------------------------------------------------------------- //
 // feel: hover feedback and one-shot animations                                 //
 // --------------------------------------------------------------------------- //
+
+/// The glyph shown on an operator key (serif-ish × and ÷ rather than * and /).
+fn key_symbol(op: Op) -> &'static str {
+    match op {
+        Op::Add => "+",
+        Op::Sub => "-",
+        Op::Mul => "×",
+        Op::Div => "÷",
+    }
+}
 
 fn lighten(color: Color, amount: f32) -> Color {
     color.mix(&Color::WHITE, amount)
@@ -1496,14 +1556,14 @@ fn update_board(
     set_text(
         &mut texts,
         ui.mode_chip,
-        format!("{} · {}", game.mode.label(), game.difficulty.label()),
+        tracked(&format!("{} · {}", game.mode.label(), game.difficulty.label())),
     );
     set_text(&mut texts, ui.status, game.status());
     if let Ok(mut color) = text_colors.get_mut(ui.status) {
         *color = TextColor(match game.round.phase {
             Phase::Won => WIN,
             Phase::Lost => LOSE,
-            Phase::Playing => MUTED,
+            Phase::Playing => TEXT,
         });
     }
     set_text(&mut texts, ui.message, game.message.clone());
@@ -1511,8 +1571,8 @@ fn update_board(
         &mut texts,
         ui.score,
         match game.last_score {
-            Some(value) => format!("Round score: +{value}    Total: {}", game.total_score),
-            None => format!("Score: {}", game.total_score),
+            Some(value) => tracked(&format!("Score {}  ·  +{value}", game.total_score)),
+            None => tracked(&format!("Score {}", game.total_score)),
         },
     );
 
@@ -1593,15 +1653,16 @@ fn update_board(
         if let Ok(mut border) = borders.get_mut(slot) {
             *border = BorderColor::all(if pending { GOLD } else { BORDER });
         }
-        set_text(&mut texts, label, operator.symbol().to_string());
+        set_text(&mut texts, label, key_symbol(*operator).to_string());
         if let Ok(mut color) = text_colors.get_mut(label) {
             *color = TextColor(if pending { CARD_INK } else { TEXT });
         }
     }
 
     let undo_enabled = game.round.can_undo();
-    if let Ok(mut color) = backgrounds.get_mut(ui.undo) {
-        *color = BackgroundColor(if undo_enabled { KEY } else { BG });
+    // Ghost control: underline + text dim when there is nothing to undo.
+    if let Ok(mut border) = borders.get_mut(ui.undo) {
+        *border = BorderColor::all(if undo_enabled { MUTED } else { BG });
     }
     set_text(&mut texts, ui.undo_label, "Undo".to_string());
     if let Ok(mut color) = text_colors.get_mut(ui.undo_label) {
@@ -1628,7 +1689,7 @@ fn update_countdown(
     mut nodes: Query<&mut Node>,
 ) {
     let text = match timer.phase.seconds_left() {
-        Some(seconds) => format!("Hiding in {seconds}s"),
+        Some(seconds) => tracked(&format!("Hiding in {seconds}s")),
         None => String::new(),
     };
     set_text(&mut texts, ui.countdown, text);
