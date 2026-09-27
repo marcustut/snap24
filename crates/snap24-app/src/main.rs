@@ -23,29 +23,29 @@ use bevy::ui_widgets::{
     observe, slider_self_update, Slider, SliderOrientation, SliderRange, SliderStep, SliderThumb,
     SliderValue, TrackClick,
 };
-use logic::{round_score, MergeError, Op, Phase, Round, Suit, ViewPhase};
+use logic::{round_score, MergeError, Op, Phase, Round, ViewPhase};
 use snap24_core::{
     evaluate, first_move, generate, generate_targeted, move_sequence, solutions_infix,
     solutions_steps, Difficulty, Mode, Move, Puzzle, Rational, Rng,
 };
 use std::time::{SystemTime, UNIX_EPOCH};
 
-const BG: Color = Color::srgb(0.043, 0.043, 0.047);
-const PANEL: Color = Color::srgb(0.082, 0.082, 0.090);
-const CARD: Color = Color::srgb(0.97, 0.97, 0.96);
-const CARD_INK: Color = Color::srgb(0.063, 0.063, 0.071);
-const CARD_RED: Color = Color::srgb(0.82, 0.20, 0.18);
-const CARD_BACK: Color = Color::srgb(0.15, 0.16, 0.18);
-const CARD_SELECTED: Color = Color::srgb(0.91, 0.76, 0.34);
-const TOKEN: Color = Color::srgb(0.12, 0.12, 0.14);
-const KEY: Color = Color::srgb(0.11, 0.11, 0.13);
-const BORDER: Color = Color::srgb(0.20, 0.21, 0.24);
-const TEXT: Color = Color::srgb(0.93, 0.93, 0.94);
-const MUTED: Color = Color::srgb(0.54, 0.57, 0.63);
-const GOLD: Color = Color::srgb(0.91, 0.76, 0.34);
-const GREEN: Color = Color::srgb(0.24, 0.86, 0.52);
-const WIN: Color = Color::srgb(0.24, 0.86, 0.52);
-const LOSE: Color = Color::srgb(0.90, 0.36, 0.34);
+// Direction A · Parlour — warm near-black room, ivory cards, brass accent.
+const BG: Color = Color::srgb(0.035, 0.027, 0.023);
+const PANEL: Color = Color::srgb(0.078, 0.061, 0.047);
+const CARD: Color = Color::srgb(0.953, 0.925, 0.878);
+const CARD_INK: Color = Color::srgb(0.102, 0.078, 0.059);
+const CARD_RED: Color = Color::srgb(0.698, 0.227, 0.180);
+const CARD_BACK: Color = Color::srgb(0.086, 0.067, 0.051);
+const TOKEN: Color = Color::srgb(0.078, 0.063, 0.047);
+const KEY: Color = Color::srgb(0.086, 0.067, 0.051);
+const BORDER: Color = Color::srgb(0.24, 0.20, 0.16);
+const TEXT: Color = Color::srgb(0.937, 0.906, 0.855);
+const MUTED: Color = Color::srgb(0.55, 0.50, 0.44);
+const GOLD: Color = Color::srgb(0.788, 0.635, 0.290);
+const GREEN: Color = GOLD;
+const WIN: Color = Color::srgb(0.788, 0.635, 0.290);
+const LOSE: Color = Color::srgb(0.698, 0.227, 0.180);
 
 /// Largest hand any mode deals (Classic/Custom Easy are 5). Extra card slots
 /// are spawned up front and hidden when unused.
@@ -197,6 +197,7 @@ impl Default for ViewTimer {
 #[derive(Resource)]
 struct BoardUi {
     target: Entity,
+    mode_chip: Entity,
     countdown: Entity,
     countdown_pill: Entity,
     status: Entity,
@@ -208,6 +209,9 @@ struct BoardUi {
     cards: [Entity; MAX_CARDS],
     ranks: [Entity; MAX_CARDS],
     suits: [Entity; MAX_CARDS],
+    fracs: [Entity; MAX_CARDS],
+    nums: [Entity; MAX_CARDS],
+    dens: [Entity; MAX_CARDS],
     operators: [Entity; 4],
     operator_labels: [Entity; 4],
 }
@@ -383,7 +387,8 @@ fn main() {
         .init_resource::<ViewTimer>()
         .init_resource::<TargetEntry>()
         .init_resource::<FxPrev>()
-        .add_systems(Startup, (load_fonts, setup).chain())
+        .init_resource::<Fonts>()
+        .add_systems(Startup, setup)
         .add_systems(OnEnter(Screen::Title), spawn_title)
         .add_systems(OnEnter(Screen::ModeSelect), spawn_mode_select)
         .add_systems(OnEnter(Screen::DifficultySelect), spawn_difficulty_select)
@@ -435,6 +440,8 @@ fn main() {
     #[cfg(feature = "devtools")]
     app.add_plugins(devtools::DevtoolsPlugin);
 
+    install_fonts(&mut app);
+
     app.run();
 }
 
@@ -442,21 +449,43 @@ fn setup(mut commands: Commands) {
     commands.spawn(Camera2d);
 }
 
-/// Replaces Bevy's built-in default font with DejaVu Sans, which includes the
-/// card-suit glyphs (♠ ♥ ♦ ♣) the default font lacks.
-fn load_fonts(mut fonts: ResMut<Assets<Font>>) {
-    const FONT: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/assets/fonts/DejaVuSans.ttf");
-    match std::fs::read(FONT) {
-        Ok(bytes) => {
-            if fonts
-                .insert(bevy::asset::AssetId::default(), Font::from_bytes(bytes))
-                .is_err()
-            {
-                warn!("could not override the default font");
-            }
+/// Type for direction A: Fraunces (display), Space Grotesk (body, the global
+/// default), DejaVu Sans (only for the ♠♥♦♣ suit glyphs, which the other two
+/// lack).
+#[derive(Resource, Default)]
+struct Fonts {
+    display: Handle<Font>,
+    suit: Handle<Font>,
+}
+
+fn add_font(fonts: &mut Assets<Font>, path: &str) -> Handle<Font> {
+    match std::fs::read(path) {
+        Ok(bytes) => fonts.add(Font::from_bytes(bytes)),
+        Err(_) => {
+            warn!("bundled font missing: {path}");
+            Handle::default()
         }
-        Err(_) => warn!("bundled font not found at {FONT}; card suits may render as boxes"),
     }
+}
+
+/// Installs the three fonts at build time, before any system runs, so the very
+/// first `OnEnter` already has real handles.
+fn install_fonts(app: &mut App) {
+    const DIR: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/assets/fonts");
+    let (display, suit) = {
+        let mut fonts = app.world_mut().resource_mut::<Assets<Font>>();
+        let display = add_font(&mut fonts, &format!("{DIR}/Fraunces-Black.ttf"));
+        let suit = add_font(&mut fonts, &format!("{DIR}/DejaVuSans.ttf"));
+        // Space Grotesk becomes the default body font.
+        match std::fs::read(format!("{DIR}/SpaceGrotesk-Regular.ttf")) {
+            Ok(bytes) => {
+                let _ = fonts.insert(bevy::asset::AssetId::default(), Font::from_bytes(bytes));
+            }
+            Err(_) => warn!("Space Grotesk missing; falling back to the built-in font"),
+        }
+        (display, suit)
+    };
+    app.world_mut().insert_resource(Fonts { display, suit });
 }
 
 // --------------------------------------------------------------------------- //
@@ -546,10 +575,11 @@ fn panel(parent: &mut ChildSpawnerCommands, build: impl FnOnce(&mut ChildSpawner
         .with_children(build);
 }
 
-fn heading(parent: &mut ChildSpawnerCommands, text: &str, size: f32) {
+fn heading(parent: &mut ChildSpawnerCommands, text: &str, size: f32, font: &Handle<Font>) {
     parent.spawn((
         Text::new(text),
         TextFont {
+            font: font.clone().into(),
             font_size: FontSize::Px(size),
             ..default()
         },
@@ -557,24 +587,66 @@ fn heading(parent: &mut ChildSpawnerCommands, text: &str, size: f32) {
     ));
 }
 
-fn spawn_title(mut commands: Commands) {
+/// A static text node in a specific font.
+fn text_static(
+    parent: &mut ChildSpawnerCommands,
+    text: &str,
+    size: f32,
+    color: Color,
+    font: &Handle<Font>,
+) {
+    parent.spawn((
+        Text::new(text),
+        TextFont {
+            font: font.clone().into(),
+            font_size: FontSize::Px(size),
+            ..default()
+        },
+        TextColor(color),
+    ));
+}
+
+/// A text node in a specific font (used for Fraunces display and DejaVu suits).
+fn text_with(
+    parent: &mut ChildSpawnerCommands,
+    size: f32,
+    color: Color,
+    font: &Handle<Font>,
+) -> Entity {
+    parent
+        .spawn((
+            Text::new(""),
+            TextFont {
+                font: font.clone().into(),
+                font_size: FontSize::Px(size),
+                ..default()
+            },
+            TextColor(color),
+            UiTransform::default(),
+        ))
+        .id()
+}
+
+fn spawn_title(mut commands: Commands, fonts: Res<Fonts>) {
     let root = root(&mut commands);
+    let display = fonts.display.clone();
     commands.entity(root).with_children(|ui| {
         panel(ui, |p| {
-            heading(p, "SNAP 24", 72.0);
-            heading(p, "Make the target from every card.", 24.0);
+            heading(p, "SNAP 24", 72.0, &display);
+            heading(p, "Make the target from every card.", 24.0, &display);
             button(p, "Play", PlayButton);
         });
     });
 }
 
-fn spawn_mode_select(mut commands: Commands) {
+fn spawn_mode_select(mut commands: Commands, fonts: Res<Fonts>) {
     let root = root(&mut commands);
+    let display = fonts.display.clone();
     commands.entity(root).with_children(|ui| {
         panel(ui, |p| {
-            heading(p, "Choose mode", 40.0);
-            heading(p, "Classic: five cards, target 24.", 20.0);
-            heading(p, "Custom: tiers change the card count and target.", 20.0);
+            heading(p, "Choose mode", 40.0, &display);
+            heading(p, "Classic: five cards, target 24.", 22.0, &display);
+            heading(p, "Custom: tiers change the card count and target.", 22.0, &display);
             button(p, "Classic", ModeButton(Mode::Classic));
             button(p, "Custom", ModeButton(Mode::Custom));
             button(p, "Back", BackButton);
@@ -582,8 +654,9 @@ fn spawn_mode_select(mut commands: Commands) {
     });
 }
 
-fn spawn_difficulty_select(mut commands: Commands, game: Res<Game>) {
+fn spawn_difficulty_select(mut commands: Commands, game: Res<Game>, fonts: Res<Fonts>) {
     let root = root(&mut commands);
+    let display = fonts.display.clone();
     let start = Difficulty::ALL
         .iter()
         .position(|tier| *tier == game.difficulty)
@@ -591,7 +664,7 @@ fn spawn_difficulty_select(mut commands: Commands, game: Res<Game>) {
     let label = game.difficulty.label();
     commands.entity(root).with_children(|ui| {
         panel(ui, |p| {
-            heading(p, "Choose difficulty", 40.0);
+            heading(p, "Choose difficulty", 40.0, &display);
             p.spawn((
                 DifficultyLabel,
                 Text::new(label),
@@ -670,11 +743,12 @@ fn spawn_difficulty_select(mut commands: Commands, game: Res<Game>) {
     });
 }
 
-fn spawn_target_select(mut commands: Commands) {
+fn spawn_target_select(mut commands: Commands, fonts: Res<Fonts>) {
     let root = root(&mut commands);
+    let display = fonts.display.clone();
     commands.entity(root).with_children(|ui| {
         panel(ui, |p| {
-            heading(p, "Custom target", 40.0);
+            heading(p, "Custom target", 40.0, &display);
             p.spawn((
                 TargetLabel,
                 Text::new(""),
@@ -684,7 +758,7 @@ fn spawn_target_select(mut commands: Commands) {
                 },
                 TextColor(GOLD),
             ));
-            heading(p, "Type a number, or Random", 20.0);
+            heading(p, "Type a number, or Random", 20.0, &display);
             for row in [[7, 8, 9], [4, 5, 6], [1, 2, 3]] {
                 p.spawn(Node {
                     flex_direction: FlexDirection::Row,
@@ -721,8 +795,11 @@ fn spawn_target_select(mut commands: Commands) {
 
 /// Spawns the persistent board, once per entry to `Playing`. Widgets are empty
 /// on spawn; [`update_board`] fills them from `Game`.
-fn spawn_board(mut commands: Commands) {
+fn spawn_board(mut commands: Commands, fonts: Res<Fonts>) {
+    let display = fonts.display.clone();
+    let suit_font = fonts.suit.clone();
     let mut target = Entity::PLACEHOLDER;
+    let mut mode_chip = Entity::PLACEHOLDER;
     let mut countdown = Entity::PLACEHOLDER;
     let mut countdown_pill = Entity::PLACEHOLDER;
     let mut status = Entity::PLACEHOLDER;
@@ -734,6 +811,9 @@ fn spawn_board(mut commands: Commands) {
     let mut cards = [Entity::PLACEHOLDER; MAX_CARDS];
     let mut ranks = [Entity::PLACEHOLDER; MAX_CARDS];
     let mut suits = [Entity::PLACEHOLDER; MAX_CARDS];
+    let mut fracs = [Entity::PLACEHOLDER; MAX_CARDS];
+    let mut nums = [Entity::PLACEHOLDER; MAX_CARDS];
+    let mut dens = [Entity::PLACEHOLDER; MAX_CARDS];
     let mut operators = [Entity::PLACEHOLDER; 4];
     let mut operator_labels = [Entity::PLACEHOLDER; 4];
 
@@ -760,21 +840,43 @@ fn spawn_board(mut commands: Commands) {
                 ..default()
             })
             .with_children(|ui| {
-                target = text_entity(ui, 48.0, TEXT);
+                // Top bar: wordmark on the left, mode · tier on the right.
+                ui.spawn(Node {
+                    width: percent(100),
+                    justify_content: JustifyContent::SpaceBetween,
+                    align_items: AlignItems::Center,
+                    ..default()
+                })
+                .with_children(|bar| {
+                    text_static(bar, "SNAP 24", 22.0, TEXT, &display);
+                    mode_chip = text_entity(bar, 14.0, MUTED);
+                });
+
+                // Target: a small label and a large Fraunces numeral.
+                ui.spawn(Node {
+                    flex_direction: FlexDirection::Row,
+                    align_items: AlignItems::Baseline,
+                    column_gap: px(14),
+                    ..default()
+                })
+                .with_children(|row| {
+                    text_static(row, "Target", 16.0, GOLD, &display);
+                    target = text_with(row, 84.0, TEXT, &display);
+                });
                 // Timer reads as a thin outlined pill, like a game HUD chip.
                 // Hidden entirely when there is no countdown (Easy, Blind, or
                 // after the window has expired).
                 countdown_pill = ui
                     .spawn((
                         Node {
-                            border: UiRect::all(px(2)),
+                            border: UiRect::ZERO,
                             border_radius: BorderRadius::MAX,
-                            padding: UiRect::axes(px(20), px(6)),
+                            padding: UiRect::axes(px(0), px(4)),
                             min_width: px(140),
                             justify_content: JustifyContent::Center,
                             ..default()
                         },
-                        BorderColor::all(GREEN),
+                        BorderColor::all(GOLD),
                     ))
                     .with_children(|pill| {
                         countdown = text_entity(pill, 22.0, GREEN);
@@ -812,8 +914,34 @@ fn spawn_board(mut commands: Commands) {
                                 BoxShadow::new(Color::srgba(0.0, 0.0, 0.0, 0.5), px(0), px(8), px(0), px(18)),
                             ))
                             .with_children(|card| {
-                                ranks[index] = text_entity(card, 44.0, CARD_INK);
-                                suits[index] = text_entity(card, 32.0, CARD_INK);
+                                ranks[index] = text_with(card, 46.0, CARD_INK, &display);
+                                suits[index] = text_with(card, 34.0, CARD_INK, &suit_font);
+                                // Stacked fraction (numerator / bar / denominator),
+                                // shown for merged fractional values.
+                                fracs[index] = card
+                                    .spawn(Node {
+                                        width: percent(100),
+                                        flex_direction: FlexDirection::Column,
+                                        align_items: AlignItems::Center,
+                                        justify_content: JustifyContent::Center,
+                                        row_gap: px(2),
+                                        display: Display::None,
+                                        ..default()
+                                    })
+                                    .with_children(|frac| {
+                                        nums[index] = text_with(frac, 30.0, GOLD, &display);
+                                        frac.spawn((
+                                            Node {
+                                                height: px(3),
+                                                width: px(48),
+                                                border_radius: BorderRadius::all(px(2)),
+                                                ..default()
+                                            },
+                                            BackgroundColor(GOLD),
+                                        ));
+                                        dens[index] = text_with(frac, 30.0, GOLD, &display);
+                                    })
+                                    .id();
                             })
                             .id();
                         cards[index] = slot;
@@ -832,16 +960,16 @@ fn spawn_board(mut commands: Commands) {
                                 Button,
                                 OperatorButton(operator),
                                 Node {
-                                    width: px(84),
-                                    height: px(64),
+                                    width: px(76),
+                                    height: px(76),
                                     justify_content: JustifyContent::Center,
                                     align_items: AlignItems::Center,
-                                    border: UiRect::ZERO,
-                                    border_radius: BorderRadius::all(px(20)),
+                                    border: UiRect::all(px(1)),
+                                    border_radius: BorderRadius::MAX,
                                     ..default()
                                 },
-                                BackgroundColor(KEY),
-                                BorderColor::all(KEY),
+                                BackgroundColor(BG),
+                                BorderColor::all(BORDER),
                             ))
                             .with_children(|key| {
                                 operator_labels[index] = text_entity(key, 30.0, TEXT);
@@ -905,6 +1033,7 @@ fn spawn_board(mut commands: Commands) {
 
     commands.insert_resource(BoardUi {
         target,
+        mode_chip,
         countdown,
         countdown_pill,
         status,
@@ -916,6 +1045,9 @@ fn spawn_board(mut commands: Commands) {
         cards,
         ranks,
         suits,
+        fracs,
+        nums,
+        dens,
         operators,
         operator_labels,
     });
@@ -1360,15 +1492,11 @@ fn update_board(
     let Some(ui) = ui else {
         return;
     };
+    set_text(&mut texts, ui.target, game.round.target.to_string());
     set_text(
         &mut texts,
-        ui.target,
-        format!(
-            "Target: {}   ({} · {})",
-            game.round.target,
-            game.mode.label(),
-            game.difficulty.label()
-        ),
+        ui.mode_chip,
+        format!("{} · {}", game.mode.label(), game.difficulty.label()),
     );
     set_text(&mut texts, ui.status, game.status());
     if let Ok(mut color) = text_colors.get_mut(ui.status) {
@@ -1398,26 +1526,43 @@ fn update_board(
             let selected = game.round.is_first(index);
             let suit = game.round.suit(index);
 
-            // Face: a poker card (rank + suit), or a gold value token when the
-            // entry is a merged result rather than a dealt card.
-            let (rank, suit_glyph, ink, background) = if !revealed {
-                ("?".to_string(), String::new(), MUTED, CARD_BACK)
-            } else if selected {
-                (labels[index].clone(), suit.map(Suit::glyph).unwrap_or("●").to_string(), CARD_INK, CARD_SELECTED)
-            } else {
-                match suit {
-                    Some(suit) => (
-                        labels[index].clone(),
-                        suit.glyph().to_string(),
-                        if suit.is_red() { CARD_RED } else { CARD_INK },
-                        CARD,
-                    ),
-                    None => (labels[index].clone(), "●".to_string(), GOLD, TOKEN),
-                }
-            };
+            let background;
+            let ink;
 
-            set_text(&mut texts, ui.ranks[index], rank);
-            set_text(&mut texts, ui.suits[index], suit_glyph);
+            if !revealed {
+                set_display(&mut nodes, ui.ranks[index], Display::Flex);
+                set_display(&mut nodes, ui.suits[index], Display::None);
+                set_display(&mut nodes, ui.fracs[index], Display::None);
+                set_text(&mut texts, ui.ranks[index], "?".to_string());
+                ink = MUTED;
+                background = CARD_BACK;
+            } else if let Some(suit) = suit {
+                set_display(&mut nodes, ui.ranks[index], Display::Flex);
+                set_display(&mut nodes, ui.suits[index], Display::Flex);
+                set_display(&mut nodes, ui.fracs[index], Display::None);
+                set_text(&mut texts, ui.ranks[index], labels[index].clone());
+                set_text(&mut texts, ui.suits[index], suit.glyph().to_string());
+                ink = if suit.is_red() { CARD_RED } else { CARD_INK };
+                background = CARD;
+            } else {
+                // Merged value: an integer token, or a stacked fraction.
+                let (numer, denom) = game.round.cards[index].parts();
+                if denom == 1 {
+                    set_display(&mut nodes, ui.ranks[index], Display::Flex);
+                    set_display(&mut nodes, ui.suits[index], Display::None);
+                    set_display(&mut nodes, ui.fracs[index], Display::None);
+                    set_text(&mut texts, ui.ranks[index], numer.to_string());
+                } else {
+                    set_display(&mut nodes, ui.ranks[index], Display::None);
+                    set_display(&mut nodes, ui.suits[index], Display::None);
+                    set_display(&mut nodes, ui.fracs[index], Display::Flex);
+                    set_text(&mut texts, ui.nums[index], numer.to_string());
+                    set_text(&mut texts, ui.dens[index], denom.to_string());
+                }
+                ink = GOLD;
+                background = TOKEN;
+            }
+
             if let Ok(mut color) = text_colors.get_mut(ui.ranks[index]) {
                 *color = TextColor(ink);
             }
@@ -1428,7 +1573,9 @@ fn update_board(
                 *color = BackgroundColor(background);
             }
             if let Ok(mut border) = borders.get_mut(slot) {
-                *border = BorderColor::all(if selected { GOLD } else { BORDER });
+                // Only the selected card gets a ring; otherwise the border is
+                // invisible so ivory cards read as clean paper.
+                *border = BorderColor::all(if selected { GOLD } else { background });
             }
         } else {
             set_display(&mut nodes, slot, Display::None);
@@ -1441,7 +1588,10 @@ fn update_board(
     {
         let pending = game.round.op == Some(*operator);
         if let Ok(mut color) = backgrounds.get_mut(slot) {
-            *color = BackgroundColor(if pending { GOLD } else { KEY });
+            *color = BackgroundColor(if pending { GOLD } else { BG });
+        }
+        if let Ok(mut border) = borders.get_mut(slot) {
+            *border = BorderColor::all(if pending { GOLD } else { BORDER });
         }
         set_text(&mut texts, label, operator.symbol().to_string());
         if let Ok(mut color) = text_colors.get_mut(label) {

@@ -1,0 +1,288 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Snap 24 — three directions</title>
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,400;9..144,600;9..144,900&family=Space+Grotesk:wght@300;400;500;700&family=Bodoni+Moda:opsz,wght@6..96,400;6..96,700;6..96,900&family=Sora:wght@200;300;400;600&family=Space+Mono:ital,wght@0,400;0,700;1,400&display=swap" rel="stylesheet" />
+<style>
+  :root {
+    --page-bg: #060708;
+    --page-ink: #e9e9ea;
+    --page-muted: #7d838c;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; }
+  body {
+    background: var(--page-bg);
+    color: var(--page-ink);
+    font-family: "Space Grotesk", system-ui, sans-serif;
+    text-wrap: pretty;
+    padding: 56px clamp(20px, 5vw, 72px) 96px;
+  }
+  header.intro { max-width: 1180px; margin: 0 auto 56px; }
+  header.intro .kicker {
+    font-size: 12px; letter-spacing: .34em; text-transform: uppercase;
+    color: var(--page-muted); margin-bottom: 18px;
+  }
+  header.intro h1 {
+    font-family: "Fraunces", serif; font-weight: 600;
+    font-size: clamp(30px, 4vw, 50px); line-height: 1.05; margin: 0 0 16px;
+    letter-spacing: -0.015em;
+  }
+  header.intro p {
+    max-width: 760px; color: #b6bbc3; font-size: 16px; line-height: 1.6; margin: 0 0 8px;
+  }
+  header.intro .rule { height: 1px; background: #1b1e22; margin: 34px 0 0; }
+
+  .direction { max-width: 1180px; margin: 0 auto 84px; }
+  .direction > .label {
+    display: flex; align-items: baseline; gap: 16px; margin-bottom: 18px;
+    font-size: 13px; letter-spacing: .22em; text-transform: uppercase; color: var(--page-muted);
+  }
+  .direction > .label b { color: var(--page-ink); font-weight: 600; letter-spacing: .18em; }
+  .direction > .label .type { letter-spacing: .04em; text-transform: none; color: #8b9099; }
+
+  /* ---------------- shared board skeleton ---------------- */
+  .board {
+    position: relative;
+    width: 100%;
+    min-height: 660px;
+    border-radius: 26px;
+    padding: 40px 48px 34px;
+    display: grid;
+    grid-template-rows: auto auto auto auto auto auto 1fr auto;
+    justify-items: center;
+    align-items: center;
+    row-gap: 20px;
+    overflow: hidden;
+    background: var(--bg);
+    color: var(--ink-ui);
+  }
+  .topbar {
+    width: 100%; display: flex; align-items: center; justify-content: space-between;
+  }
+  .mark { font-size: 22px; }
+  .chip { font-size: 12px; letter-spacing: .26em; text-transform: uppercase; opacity: .72; }
+
+  .timer { font-size: 14px; }
+
+  .target { display: flex; align-items: baseline; gap: 20px; }
+  .target .label { font-size: 12px; letter-spacing: .34em; text-transform: uppercase; opacity: .6; }
+  .target .num { font-size: 132px; line-height: .82; }
+
+  .hand { display: flex; gap: 14px; }
+  .card {
+    width: 104px; height: 146px; border-radius: 16px;
+    display: flex; flex-direction: column; align-items: flex-start; justify-content: flex-start;
+    padding: 12px 14px; gap: 2px;
+    background: var(--card); color: var(--ink); font-weight: 700;
+    position: relative; transition: transform .18s ease;
+  }
+  .card .rank { font-size: 34px; line-height: 1; }
+  .card .suit { font-size: 26px; line-height: 1; }
+  .card.red { color: var(--red); }
+  .card.sel { transform: translateY(-10px); }
+
+  .ops { display: flex; gap: 14px; }
+  .op {
+    width: 62px; height: 62px; display: grid; place-items: center;
+    font-size: 24px; background: var(--key); color: var(--ink-ui); border-radius: 16px;
+  }
+  .status { font-size: 18px; opacity: .85; }
+  .score { font-size: 13px; letter-spacing: .24em; text-transform: uppercase; opacity: .5; }
+  .controls { display: flex; gap: 26px; align-items: center; }
+  .controls span { font-size: 15px; opacity: .9; }
+  .controls span.dim { opacity: .34; }
+
+  .caption {
+    max-width: 1180px; margin: 16px auto 0; font-size: 14px; line-height: 1.6; color: #9aa0a8;
+  }
+  .caption b { color: #d6d9de; font-weight: 600; }
+
+  /* ============ A · PARLOUR — high-contrast serif, warm ivory ============ */
+  .board.a {
+    --bg: radial-gradient(120% 90% at 50% 0%, #191410 0%, #0e0b09 58%, #080605 100%);
+    --card: #f3ece0; --ink: #1a140f; --red: #b23a2e;
+    --ink-ui: #efe7da; --key: #1c1713;
+    font-family: "Space Grotesk", sans-serif;
+    box-shadow: inset 0 0 0 1px rgba(201,162,74,.16);
+  }
+  .board.a .mark { font-family: "Fraunces", serif; font-weight: 600; letter-spacing: -.01em; }
+  .board.a .mark em { font-style: normal; color: #c9a24a; font-weight: 900; }
+  .board.a .chip { color: #c9a24a; }
+  .board.a .timer {
+    font-size: 13px; letter-spacing: .3em; text-transform: uppercase; color: #c9a24a;
+    border-bottom: 1px solid rgba(201,162,74,.4); padding-bottom: 6px;
+  }
+  .board.a .target .label { color: #c9a24a; }
+  .board.a .target .num { font-family: "Fraunces", serif; font-weight: 900; letter-spacing: -.03em; }
+  .board.a .card { border-radius: 14px 14px 14px 4px; box-shadow: 0 22px 40px -24px rgba(0,0,0,.9); }
+  .board.a .card.sel { box-shadow: 0 0 0 2px #c9a24a, 0 24px 44px -22px rgba(0,0,0,.9); }
+  .board.a .op { border-radius: 999px; border: 1px solid rgba(201,162,74,.28); background: transparent; }
+  .board.a .controls span { border-bottom: 1px solid rgba(239,231,218,.28); padding-bottom: 3px; }
+
+  /* ============ B · COUTURE — Didone, gold on obsidian ============ */
+  .board.b {
+    --bg: radial-gradient(120% 100% at 50% -10%, #14161b 0%, #0a0b0e 55%, #060708 100%);
+    --card: #fafaf8; --ink: #0b0c0e; --red: #c0392b;
+    --ink-ui: #eceef1; --key: #121317;
+    font-family: "Sora", sans-serif;
+  }
+  .board.b .mark { font-family: "Sora", sans-serif; font-weight: 200; letter-spacing: .42em; text-transform: uppercase; font-size: 17px; }
+  .board.b .mark em { font-style: normal; font-family: "Bodoni Moda", serif; font-weight: 700; letter-spacing: 0; color: #d8b36a; }
+  .board.b .chip { color: #d8b36a; letter-spacing: .34em; }
+  .board.b .timer {
+    color: #d8b36a; border: 1px solid rgba(216,179,106,.45); border-radius: 999px;
+    padding: 7px 20px; letter-spacing: .3em; text-transform: uppercase; font-size: 11px;
+  }
+  .board.b .target { flex-direction: column; gap: 10px; align-items: center; }
+  .board.b .target .label { color: #d8b36a; }
+  .board.b .target .num { font-family: "Bodoni Moda", serif; font-weight: 700; font-size: 156px; color: #f2f3f5; letter-spacing: .01em; }
+  .board.b .card { border-radius: 10px; box-shadow: 0 0 0 1px rgba(216,179,106,.35), 0 26px 44px -26px rgba(0,0,0,.95); }
+  .board.b .card .rank { font-family: "Bodoni Moda", serif; font-weight: 700; font-size: 40px; }
+  .board.b .card.sel { box-shadow: 0 0 0 2px #d8b36a, 0 26px 44px -22px rgba(0,0,0,.95); }
+  .board.b .card.sel .rank { color: #b8892f; }
+  .board.b .op { border-radius: 999px; border: 1px solid rgba(216,179,106,.4); background: transparent; font-weight: 300; }
+  .board.b .controls span { letter-spacing: .18em; text-transform: uppercase; font-size: 12px; }
+
+  /* ============ C · TERMINAL — monospace, neon-lime ============ */
+  .board.c {
+    --bg:
+      linear-gradient(rgba(255,255,255,.028) 1px, transparent 1px) 0 0 / 100% 44px,
+      linear-gradient(90deg, rgba(255,255,255,.028) 1px, transparent 1px) 0 0 / 44px 100%,
+      #0d0f11;
+    --card: #121517; --ink: #d8ff6b; --red: #ff6b5e;
+    --ink-ui: #dfe3e6; --key: #16191c;
+    font-family: "Space Mono", monospace;
+    border: 1px solid #23272b;
+  }
+  .board.c .mark { font-family: "Space Mono", monospace; font-weight: 700; letter-spacing: -.02em; }
+  .board.c .mark em { font-style: normal; color: #c7f464; }
+  .board.c .mark::after { content: "▌"; color: #c7f464; margin-left: 4px; }
+  .board.c .chip { color: #c7f464; }
+  .board.c .timer { color: #c7f464; letter-spacing: .18em; }
+  .board.c .timer::before { content: "T–"; opacity: .7; }
+  .board.c .timer::after { content: "  [RUN]"; opacity: .55; }
+  .board.c .target .label { color: #c7f464; }
+  .board.c .target .num { font-family: "Space Mono", monospace; font-weight: 700; }
+  .board.c .target .num::before { content: "["; color: #c7f464; opacity: .6; margin-right: 8px; }
+  .board.c .target .num::after { content: "]"; color: #c7f464; opacity: .6; margin-left: 8px; }
+  .board.c .card { border-radius: 10px; background: #101315; color: #e8ecef; box-shadow: inset 0 0 0 1px #2a2f33; }
+  .board.c .card .rank { font-family: "Space Mono", monospace; }
+  .board.c .card.sel { background: #14180f; color: #c7f464; box-shadow: inset 0 0 0 2px #c7f464; transform: translateY(-10px); }
+  .board.c .op { border-radius: 10px; border: 1px solid #2c3135; background: #14171a; }
+  .board.c .controls span { color: #c7f464; }
+  .board.c .controls span::before { content: "["; opacity: .5; }
+  .board.c .controls span::after { content: "]"; opacity: .5; }
+
+  footer.notes { max-width: 1180px; margin: 24px auto 0; color: #8b9099; font-size: 14px; line-height: 1.7; }
+  footer.notes h3 { color: #d6d9de; font-size: 13px; letter-spacing: .22em; text-transform: uppercase; margin: 0 0 10px; }
+  footer.notes ul { margin: 0 0 22px; padding-left: 18px; }
+  footer.notes code { font-family: "Space Mono", monospace; color: #c7f464; }
+</style>
+</head>
+<body>
+
+  <header class="intro">
+    <div class="kicker">Snap 24 · visual directions</div>
+    <h1>Three ways to make it modern and sleek — led by type.</h1>
+    <p>The rules of the game don't change: same board, same cards, same flow. What changes is the <b>typographic voice</b> and the surface around it. Each direction is a complete, real screen — pick one (or mix), then I port it into the actual Bevy build and bundle the fonts.</p>
+    <p style="color:#7d838c">Assumption I'm running with: “modern + sleek + its own style” means a dark surface, real poker cards, and a type system distinctive enough to be the game's signature. If you actually want a light/bright take, say so and I'll re-cut these.</p>
+    <div class="rule"></div>
+  </header>
+
+  <!-- ================= A · PARLOUR ================= -->
+  <section class="direction">
+    <div class="label"><b>Direction A</b> <span>Parlour</span> <span class="type">Fraunces · Space Grotesk — editorial luxe</span></div>
+    <div class="board a">
+      <div class="topbar">
+        <div class="mark">SNAP <em>24</em></div>
+        <div class="chip">Classic · Medium</div>
+      </div>
+      <div class="timer">Hiding in 9s</div>
+      <div class="target"><span class="label">Target</span><span class="num">24</span></div>
+      <div class="hand">
+        <div class="card sel"><span class="rank">10</span><span class="suit">♠</span></div>
+        <div class="card"><span class="rank">Q</span><span class="suit">♠</span></div>
+        <div class="card red"><span class="rank">K</span><span class="suit">♥</span></div>
+        <div class="card red"><span class="rank">8</span><span class="suit">♦</span></div>
+        <div class="card"><span class="rank">J</span><span class="suit">♣</span></div>
+      </div>
+      <div class="ops"><div class="op">+</div><div class="op">−</div><div class="op">×</div><div class="op">÷</div></div>
+      <div class="status">5 cards left — pick a card</div>
+      <div class="score">Score 0</div>
+      <div class="controls"><span>Hint</span><span>Reveal</span><span class="dim">Undo</span><span>New Puzzle</span><span>Menu</span></div>
+    </div>
+    <p class="caption"><b>Why it reads as “sleek”:</b> one high-contrast serif (Fraunces) carries all the weight — the target is a 132px display numeral, everything else recedes to a quiet grotesque. Warm ivory cards on a warm near-black room, brass as the single accent. Feels like a modern members' club.</p>
+  </section>
+
+  <!-- ================= B · COUTURE ================= -->
+  <section class="direction">
+    <div class="label"><b>Direction B</b> <span>Couture</span> <span class="type">Bodoni Moda · Sora — fashion-house Didone</span></div>
+    <div class="board b">
+      <div class="topbar">
+        <div class="mark">Snap <em>24</em></div>
+        <div class="chip">Classic · Medium</div>
+      </div>
+      <div class="timer">Hiding in 9s</div>
+      <div class="target"><span class="label">Target</span><span class="num">24</span></div>
+      <div class="hand">
+        <div class="card sel"><span class="rank">10</span><span class="suit">♠</span></div>
+        <div class="card"><span class="rank">Q</span><span class="suit">♠</span></div>
+        <div class="card red"><span class="rank">K</span><span class="suit">♥</span></div>
+        <div class="card red"><span class="rank">8</span><span class="suit">♦</span></div>
+        <div class="card"><span class="rank">J</span><span class="suit">♣</span></div>
+      </div>
+      <div class="ops"><div class="op">+</div><div class="op">−</div><div class="op">×</div><div class="op">÷</div></div>
+      <div class="status">5 cards left — pick a card</div>
+      <div class="score">Score 0</div>
+      <div class="controls"><span>Hint</span><span>Reveal</span><span class="dim">Undo</span><span>New Puzzle</span><span>Menu</span></div>
+    </div>
+    <p class="caption"><b>Why it reads as “sleek”:</b> extreme contrast — hairline gold rules against a Didone numeral so large it becomes the logo. Wide-tracked light caps used as labels (masthead energy), monochrome white cards with just the faintest gold keyline. A quiet, expensive feel.</p>
+  </section>
+
+  <!-- ================= C · TERMINAL ================= -->
+  <section class="direction">
+    <div class="label"><b>Direction C</b> <span>Terminal</span> <span class="type">Space Mono · Space Grotesk — industrial console</span></div>
+    <div class="board c">
+      <div class="topbar">
+        <div class="mark">SNAP<em>_24</em></div>
+        <div class="chip">classic · medium</div>
+      </div>
+      <div class="timer">9s</div>
+      <div class="target"><span class="label">target</span><span class="num">24</span></div>
+      <div class="hand">
+        <div class="card sel"><span class="rank">10</span><span class="suit">♠</span></div>
+        <div class="card"><span class="rank">Q</span><span class="suit">♠</span></div>
+        <div class="card red"><span class="rank">K</span><span class="suit">♥</span></div>
+        <div class="card red"><span class="rank">8</span><span class="suit">♦</span></div>
+        <div class="card"><span class="rank">J</span><span class="suit">♣</span></div>
+      </div>
+      <div class="ops"><div class="op">+</div><div class="op">−</div><div class="op">×</div><div class="op">÷</div></div>
+      <div class="status">5 cards left — pick a card</div>
+      <div class="score">score 0</div>
+      <div class="controls"><span>hint</span><span>reveal</span><span class="dim">undo</span><span>new puzzle</span><span>menu</span></div>
+    </div>
+    <p class="caption"><b>Why it reads as “sleek”:</b> everything is monospace and metric — the board sits on a faint grid, the target is bracketed <code>[24]</code>, the timer ticks <code>T–9s [RUN]</code>. One electric-lime accent does all the signalling. A cold, precise, tool-like identity; the further-est from the current build.</p>
+  </section>
+
+  <footer class="notes">
+    <h3>How to choose</h3>
+    <ul>
+      <li>Pick a letter, or a hybrid (“B's gold hairlines + C's mono timer”).</li>
+      <li>All three stay dark + real poker cards + one accent — they differ in <b>type voice</b>, which is the fastest lever for “has its own style”.</li>
+      <li>I verified nothing external here — these are our own game's directions, no brand assets involved.</li>
+    </ul>
+    <h3>What happens next</h3>
+    <ul>
+      <li>I port the chosen direction into the Bevy app (colors, spacing, card faces, control styling).</li>
+      <li>Fonts get bundled as <code>.ttf</code> (all three are open-source, SIL OFL) so they render offline in the game.</li>
+      <li>Motion + the difficulty slider / reveal / timer work from ticket 10 carry over unchanged.</li>
+    </ul>
+  </footer>
+
+</body>
+</html>

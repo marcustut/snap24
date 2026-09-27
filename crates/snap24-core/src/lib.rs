@@ -104,6 +104,12 @@ impl Rational {
     pub fn as_i64(self) -> Option<i64> {
         (self.den == 1).then_some(self.num)
     }
+
+    /// Numerator / denominator in lowest terms (denominator is positive), for
+    /// rendering a stacked fraction.
+    pub fn parts(self) -> (i64, i64) {
+        (self.num, self.den)
+    }
 }
 
 impl From<i64> for Rational {

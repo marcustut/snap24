@@ -1,0 +1,205 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Snap 24 — A vs C</title>
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,600;9..144,900&family=Space+Grotesk:wght@300;400;500;700&family=Space+Mono:wght@400;700&display=swap" rel="stylesheet" />
+<style>
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: #060708; color: #e9e9ea;
+    font-family: "Space Grotesk", system-ui, sans-serif; text-wrap: pretty;
+    padding: 48px clamp(18px, 4vw, 60px) 80px;
+  }
+  header { max-width: 1500px; margin: 0 auto 40px; }
+  header .kicker { font-size: 12px; letter-spacing: .32em; text-transform: uppercase; color: #7d838c; }
+  header h1 { font-family: "Fraunces", serif; font-weight: 600; font-size: clamp(26px,3vw,42px); margin: 14px 0 10px; letter-spacing: -.01em; }
+  header p { color: #b6bbc3; max-width: 900px; line-height: 1.6; font-size: 15px; margin: 0; }
+
+  .grid { max-width: 1500px; margin: 0 auto; display: grid; grid-template-columns: repeat(3, 1fr); gap: 26px; }
+  @media (max-width: 1200px) { .grid { grid-template-columns: 1fr; } }
+
+  .col > .label { display: flex; align-items: baseline; justify-content: space-between; margin-bottom: 12px; }
+  .col .name { font-size: 15px; font-weight: 600; letter-spacing: .02em; }
+  .col .fonts { font-size: 11px; letter-spacing: .16em; text-transform: uppercase; color: #7d838c; }
+  .col .verdict { margin-top: 14px; font-size: 13.5px; line-height: 1.6; color: #aeb4bc; }
+  .col .verdict b { color: #e9e9ea; }
+
+  /* ---------- board skeleton ---------- */
+  .board {
+    border-radius: 22px; padding: 26px 28px 22px; min-height: 470px;
+    display: grid; grid-template-rows: auto auto auto auto auto auto auto;
+    justify-items: center; align-items: center; row-gap: 16px; overflow: hidden;
+    background: var(--bg); color: var(--ui);
+  }
+  .topbar { width: 100%; display: flex; justify-content: space-between; align-items: center; }
+  .mark { font-size: 18px; }
+  .chip { font-size: 10.5px; letter-spacing: .24em; text-transform: uppercase; opacity: .72; }
+  .timer { font-size: 12px; }
+  .target { display: flex; align-items: baseline; gap: 14px; }
+  .target .label { font-size: 10px; letter-spacing: .3em; text-transform: uppercase; opacity: .6; }
+  .target .num { font-size: 84px; line-height: .84; }
+
+  .hand { display: flex; gap: 12px; align-items: flex-end; }
+  .card {
+    width: 82px; height: 116px; border-radius: 13px; padding: 10px 11px;
+    display: flex; flex-direction: column; gap: 1px; background: var(--card); color: var(--ink);
+  }
+  .card .rank { font-size: 27px; line-height: 1; font-weight: 700; }
+  .card .suit { font-size: 21px; line-height: 1; }
+  .card.red { color: var(--red); }
+  .card.hidden { align-items: center; justify-content: center; font-size: 30px; font-weight: 700; color: var(--muted); }
+  .card.token { align-items: flex-start; justify-content: center; background: var(--token-bg); color: var(--token-ink); box-shadow: inset 0 0 0 1.5px var(--token-line); }
+  .card.token .val { font-size: 22px; font-weight: 700; line-height: 1; }
+  .card.token .tag { font-size: 10px; letter-spacing: .18em; text-transform: uppercase; opacity: .6; margin-top: 4px; }
+  .card.sel { transform: translateY(-8px); }
+
+  .ops { display: flex; gap: 10px; }
+  .op { width: 48px; height: 48px; display: grid; place-items: center; font-size: 19px; background: var(--key); color: var(--ui); border-radius: 13px; }
+  .status { font-size: 14px; opacity: .85; }
+  .score { font-size: 11px; letter-spacing: .22em; text-transform: uppercase; opacity: .5; }
+  .controls { display: flex; gap: 18px; font-size: 12.5px; }
+  .controls span.dim { opacity: .32; }
+
+  /* A — Parlour */
+  .a { --bg: radial-gradient(120% 95% at 50% 0%, #191410 0%, #0e0b09 58%, #080605 100%); --ui:#efe7da; --card:#f3ece0; --ink:#1a140f; --red:#b23a2e; --key:#1c1713; --muted:#8a7f6f; --token-bg:#15110d; --token-ink:#c9a24a; --token-line:rgba(201,162,74,.5); font-family:"Space Grotesk",sans-serif; }
+  .a .mark { font-family:"Fraunces",serif; font-weight:600; } .a .mark em { font-style:normal; color:#c9a24a; font-weight:900; }
+  .a .chip, .a .timer, .a .target .label { color:#c9a24a; }
+  .a .timer { letter-spacing:.26em; text-transform:uppercase; }
+  .a .target .num { font-family:"Fraunces",serif; font-weight:900; letter-spacing:-.03em; }
+  .a .card .rank, .a .card .suit { font-family:"Fraunces",serif; }
+  .a .card.sel { box-shadow: 0 0 0 2px #c9a24a; }
+  .a .op { border-radius:999px; border:1px solid rgba(201,162,74,.3); background:transparent; }
+  .a .controls span { border-bottom:1px solid rgba(239,231,218,.26); padding-bottom:2px; }
+
+  /* C — Terminal */
+  .c { --bg: linear-gradient(rgba(255,255,255,.03) 1px,transparent 1px) 0 0/100% 40px, linear-gradient(90deg,rgba(255,255,255,.03) 1px,transparent 1px) 0 0/40px 100%, #0d0f11; --ui:#dfe3e6; --card:#101315; --ink:#e8ecef; --red:#ff6b5e; --key:#14171a; --muted:#5f6a72; --token-bg:#14180f; --token-ink:#c7f464; --token-line:#c7f464; font-family:"Space Mono",monospace; border:1px solid #23272b; }
+  .c .mark em { font-style:normal; color:#c7f464; }
+  .c .mark::after { content:"▌"; color:#c7f464; margin-left:3px; }
+  .c .chip, .c .timer, .c .target .label { color:#c7f464; }
+  .c .target .num::before { content:"["; opacity:.6; margin-right:6px; } .c .target .num::after { content:"]"; opacity:.6; margin-left:6px; }
+  .c .card .rank, .c .card .suit { font-family:"Space Mono",monospace; }
+  .c .card.sel { background:#14180f; color:#c7f464; box-shadow: inset 0 0 0 2px #c7f464; }
+  .c .op { border-radius:10px; border:1px solid #2c3135; }
+  .c .controls span { color:#c7f464; } .c .controls span::before{content:"[";opacity:.5;} .c .controls span::after{content:"]";opacity:.5;}
+
+  /* Hybrid — A's room, C's instrument layer */
+  .h { --bg: radial-gradient(120% 95% at 50% 0%, #191410 0%, #0e0b09 58%, #080605 100%); --ui:#efe7da; --card:#f3ece0; --ink:#1a140f; --red:#b23a2e; --key:#1c1713; --muted:#8a7f6f; --token-bg:#15110d; --token-ink:#c9a24a; --token-line:rgba(201,162,74,.5); font-family:"Space Grotesk",sans-serif; }
+  .h .mark { font-family:"Fraunces",serif; font-weight:600; } .h .mark em { font-style:normal; color:#c9a24a; font-weight:900; }
+  .h .target .num { font-family:"Fraunces",serif; font-weight:900; letter-spacing:-.03em; }
+  .h .card .rank, .h .card .suit { font-family:"Fraunces",serif; }
+  .h .card.sel { box-shadow:0 0 0 2px #c9a24a; }
+  .h .chip, .h .target .label { color:#c9a24a; }
+  /* the instrument layer: mono for anything that is data */
+  .h .timer, .h .score, .h .status, .h .controls, .h .op, .h .card.token .val, .h .card.token .tag {
+    font-family:"Space Mono",monospace;
+  }
+  .h .timer { color:#c9a24a; letter-spacing:.16em; }
+  .h .op { border-radius:999px; border:1px solid rgba(201,162,74,.3); background:transparent; }
+  .h .controls span { border-bottom:1px solid rgba(239,231,218,.26); padding-bottom:2px; }
+
+  table { max-width:1500px; margin: 44px auto 0; width: 100%; border-collapse: collapse; font-size: 14px; }
+  th, td { text-align: left; padding: 12px 14px; border-bottom: 1px solid #17191c; vertical-align: top; }
+  th { color: #7d838c; font-weight: 500; font-size: 11px; letter-spacing: .2em; text-transform: uppercase; }
+  td.win { color: #c7f464; } td.a-win { color: #e0b25e; }
+  .reco { max-width:1500px; margin: 40px auto 0; border:1px solid #1e2226; border-radius:16px; padding: 24px 28px; background:#0b0d0f; }
+  .reco h2 { font-family:"Fraunces",serif; font-weight:600; font-size:22px; margin:0 0 12px; }
+  .reco p { color:#b6bbc3; line-height:1.7; margin:0 0 10px; font-size:14.5px; }
+  .reco b { color:#e9e9ea; }
+</style>
+</head>
+<body>
+
+  <header>
+    <div class="kicker">Snap 24 · deciding A vs C</div>
+    <h1>The tie only shows up on the hard states — fractions and hidden cards.</h1>
+    <p>Same mid-game board in all three: a merged fraction token <b>13/24</b>, a real card <b>K♥</b>, and one face-down card <b>?</b>. This is where the two directions pull apart, so it's the honest place to choose.</p>
+  </header>
+
+  <div class="grid">
+    <!-- A -->
+    <div class="col">
+      <div class="label"><span class="name">A · Parlour</span><span class="fonts">Fraunces · Space Grotesk</span></div>
+      <div class="board a">
+        <div class="topbar"><div class="mark">SNAP <em>24</em></div><div class="chip">Custom · Hard</div></div>
+        <div class="timer">Hiding in 6s</div>
+        <div class="target"><span class="label">Target</span><span class="num">24</span></div>
+        <div class="hand">
+          <div class="card token"><span class="val">13/24</span><span class="tag">value</span></div>
+          <div class="card red sel"><span class="rank">K</span><span class="suit">♥</span></div>
+          <div class="card hidden">?</div>
+        </div>
+        <div class="ops"><div class="op">+</div><div class="op">−</div><div class="op">×</div><div class="op">÷</div></div>
+        <div class="status">3 left — pick a card</div>
+        <div class="score">Score 0</div>
+        <div class="controls"><span>Hint</span><span>Reveal</span><span class="dim">Undo</span><span>New</span><span>Menu</span></div>
+      </div>
+      <p class="verdict"><b>Wins:</b> identity &amp; warmth — the serif room is rare and ownable; a fraction in Fraunces reads as a crafted number, not a value. <b>Costs:</b> proportional digits don't align in a column; a dense board leans a touch “literary”.</p>
+    </div>
+
+    <!-- C -->
+    <div class="col">
+      <div class="label"><span class="name">C · Terminal</span><span class="fonts">Space Mono</span></div>
+      <div class="board c">
+        <div class="topbar"><div class="mark">SNAP<em>_24</em></div><div class="chip">custom · hard</div></div>
+        <div class="timer">6s</div>
+        <div class="target"><span class="label">target</span><span class="num">24</span></div>
+        <div class="hand">
+          <div class="card token"><span class="val">13/24</span><span class="tag">val</span></div>
+          <div class="card red sel"><span class="rank">K</span><span class="suit">♥</span></div>
+          <div class="card hidden">?</div>
+        </div>
+        <div class="ops"><div class="op">+</div><div class="op">−</div><div class="op">×</div><div class="op">÷</div></div>
+        <div class="status">3 left — pick a card</div>
+        <div class="score">score 0</div>
+        <div class="controls"><span>hint</span><span>reveal</span><span class="dim">undo</span><span>new</span><span>menu</span></div>
+      </div>
+      <p class="verdict"><b>Wins:</b> fractions and the hidden card feel <i>native</i> — mono digits line up, “?” reads as redacted data, the timer already feels like a readout. <b>Costs:</b> mono + neon + grid is a well-worn look; risks reading as “generic dev tool” rather than Snap 24's own world.</p>
+    </div>
+
+    <!-- Hybrid -->
+    <div class="col">
+      <div class="label"><span class="name">A × C · Hybrid</span><span class="fonts">Fraunces + Space Mono</span></div>
+      <div class="board h">
+        <div class="topbar"><div class="mark">SNAP <em>24</em></div><div class="chip">Custom · Hard</div></div>
+        <div class="timer">Hiding in 6s</div>
+        <div class="target"><span class="label">Target</span><span class="num">24</span></div>
+        <div class="hand">
+          <div class="card token"><span class="val">13/24</span><span class="tag">value</span></div>
+          <div class="card red sel"><span class="rank">K</span><span class="suit">♥</span></div>
+          <div class="card hidden">?</div>
+        </div>
+        <div class="ops"><div class="op">+</div><div class="op">−</div><div class="op">×</div><div class="op">÷</div></div>
+        <div class="status">3 left — pick a card</div>
+        <div class="score">Score 0</div>
+        <div class="controls"><span>Hint</span><span>Reveal</span><span class="dim">Undo</span><span>New</span><span>Menu</span></div>
+      </div>
+      <p class="verdict"><b>Wins:</b> keeps A's room and serif identity, but hands the <i>numeric layer</i> to mono — computed values, timer, score, operator keys. Fractions align, readouts feel precise, brand stays warm. <b>Costs:</b> one extra font to bundle; needs discipline about what counts as “data”.</p>
+    </div>
+  </div>
+
+  <table>
+    <thead><tr><th>Decision axis</th><th>A · Parlour</th><th>C · Terminal</th><th>A × C Hybrid</th></tr></thead>
+    <tbody>
+      <tr><td>Ownable “own style”</td><td class="a-win">Strong — rare in games</td><td>Weak — familiar dev-tool look</td><td class="a-win">Strong (serif leads)</td></tr>
+      <tr><td>Fractions / dense numbers</td><td>Weak — proportional digits drift</td><td class="win">Strong — mono aligns</td><td class="win">Strong — mono for values</td></tr>
+      <tr><td>Hidden / Blind theming</td><td>OK — card-back reading</td><td class="win">Clever — “redacted data”</td><td class="win">Good — uses C's layer</td></tr>
+      <tr><td>Warmth / memorability</td><td class="a-win">High</td><td>Low / cold</td><td class="a-win">High</td></tr>
+      <tr><td>Extends to a premium iOS app</td><td class="a-win">Easy</td><td>Niche</td><td class="a-win">Easy</td></tr>
+      <tr><td>Fonts to bundle in Bevy</td><td>2 (Fraunces, Space Grotesk)</td><td class="win">1 (Space Mono)</td><td>2 (Fraunces, Space Mono)</td></tr>
+    </tbody>
+  </table>
+
+  <div class="reco">
+    <h2>My call: go A × C — but if it must be one, pick A.</h2>
+    <p><b>Why not pure C:</b> its advantages (mono alignment, readout feel) are all about the <i>data layer</i>, not the game's identity — and its cost is exactly the thing you asked for, “its own style”. Mono + grid + neon is the most recognisable AI/dev-tool aesthetic there is; it would make Snap 24 look like everything else.</p>
+    <p><b>Why not pure A:</b> it's genuinely ownable, but proportional serif numerals fight you on fractions (11/8, 13/24) and column alignment — and fractions are core to this game.</p>
+    <p><b>The hybrid resolves the actual tension:</b> <b>Fraunces</b> owns the brand layer (wordmark, target, card ranks — that's where “own style” lives), <b>Space Mono</b> owns the instrument layer (computed value tokens, timer, score, status, operator keys — that's where alignment and precision live). One rule to keep it coherent: <i>cards and the target are the game; everything counted or measured is mono.</i></p>
+    <p style="color:#7d838c;margin-top:14px">Quick gut-check if you'd rather not hybridise: look at the <b>13/24 token</b> in each column above. If it bugs you that it wobbles in A, or that C feels like a dashboard, that's your answer.</p>
+  </div>
+
+</body>
+</html>
