@@ -17,6 +17,9 @@ mod devtools;
 
 use bevy::color::Mix;
 use bevy::input_focus::tab_navigation::{TabIndex, TabNavigationPlugin};
+use bevy::ui::{
+    BackgroundGradient, ColorStop, Gradient, RadialGradient, RadialGradientShape, UiPosition,
+};
 use bevy::picking::hover::Hovered;
 use bevy::prelude::*;
 use bevy::ui_widgets::{
@@ -205,6 +208,8 @@ struct BoardUi {
     undo: Entity,
     undo_label: Entity,
     more: Entity,
+    give_up: Entity,
+    next: Entity,
     cards: [Entity; MAX_CARDS],
     ranks: [Entity; MAX_CARDS],
     suits: [Entity; MAX_CARDS],
@@ -323,8 +328,13 @@ struct HintButton;
 #[derive(Component)]
 struct RevealButton;
 
+/// Ends the current round and deals a new puzzle (shown mid-round as "Give up").
 #[derive(Component)]
 struct NewPuzzleButton;
+
+/// Deals the next puzzle once a round is over.
+#[derive(Component)]
+struct NextPuzzleButton;
 
 #[derive(Component)]
 struct DigitButton(u32);
@@ -512,6 +522,7 @@ fn root(commands: &mut Commands) -> Entity {
                 ..default()
             },
             BackgroundColor(BG),
+            vignette(),
         ))
         .id()
 }
@@ -584,6 +595,18 @@ fn heading(parent: &mut ChildSpawnerCommands, text: &str, size: f32, font: &Hand
         },
         TextColor(TEXT),
     ));
+}
+
+/// A subtle warm radial glow from the top, fading to the base colour.
+fn vignette() -> BackgroundGradient {
+    BackgroundGradient::from(Gradient::Radial(RadialGradient::new(
+        UiPosition::TOP,
+        RadialGradientShape::FarthestCorner,
+        vec![
+            ColorStop::new(Color::srgb(0.105, 0.078, 0.058), percent(0.0)),
+            ColorStop::new(BG, percent(62.0)),
+        ],
+    )))
 }
 
 /// Wide-tracked uppercase, approximating the mockup's letterspacing (Bevy text
@@ -864,6 +887,8 @@ fn spawn_board(mut commands: Commands, fonts: Res<Fonts>) {
     let mut undo = Entity::PLACEHOLDER;
     let mut undo_label = Entity::PLACEHOLDER;
     let mut more = Entity::PLACEHOLDER;
+    let mut give_up = Entity::PLACEHOLDER;
+    let mut next = Entity::PLACEHOLDER;
     let mut cards = [Entity::PLACEHOLDER; MAX_CARDS];
     let mut ranks = [Entity::PLACEHOLDER; MAX_CARDS];
     let mut suits = [Entity::PLACEHOLDER; MAX_CARDS];
@@ -886,6 +911,7 @@ fn spawn_board(mut commands: Commands, fonts: Res<Fonts>) {
                 ..default()
             },
             BackgroundColor(BG),
+            vignette(),
         ))
         .with_children(|root| {
             root.spawn(Node {
@@ -1078,11 +1104,34 @@ fn spawn_board(mut commands: Commands, fonts: Res<Fonts>) {
                     ))
                     .id();
 
+                // The primary action after a round: a solid brass "Next puzzle".
+                next = ui
+                    .spawn((
+                        Button,
+                        NextPuzzleButton,
+                        Hoverable { base: GOLD },
+                        Node {
+                            padding: UiRect::axes(px(28), px(14)),
+                            border_radius: BorderRadius::MAX,
+                            justify_content: JustifyContent::Center,
+                            display: Display::None,
+                            ..default()
+                        },
+                        BackgroundColor(GOLD),
+                        BorderColor::all(GOLD),
+                    ))
+                    .with_children(|button| {
+                        text_body(button, "Next puzzle", 18.0, CARD_INK);
+                    })
+                    .id();
+
+                // In-play actions, then a gap, then puzzle management.
                 ui.spawn(Node {
                     flex_direction: FlexDirection::Row,
                     column_gap: px(14),
                     flex_wrap: FlexWrap::Wrap,
                     justify_content: JustifyContent::Center,
+                    align_items: AlignItems::Center,
                     ..default()
                 })
                 .with_children(|row| {
@@ -1090,7 +1139,12 @@ fn spawn_board(mut commands: Commands, fonts: Res<Fonts>) {
                     ghost_button(row, "Reveal", RevealButton);
                     more = ghost_button(row, "More", ShowMoreButton);
                     undo = ghost_button_id(row, "Undo", UndoButton, &mut undo_label);
-                    ghost_button(row, "New Puzzle", NewPuzzleButton);
+                    // Visual separation: giving up is not a nav action.
+                    row.spawn(Node {
+                        width: px(44),
+                        ..default()
+                    });
+                    give_up = ghost_button(row, "Give up", NewPuzzleButton);
                     ghost_button(row, "Menu", BackButton);
                 });
             });
@@ -1107,6 +1161,8 @@ fn spawn_board(mut commands: Commands, fonts: Res<Fonts>) {
         undo,
         undo_label,
         more,
+        give_up,
+        next,
         cards,
         ranks,
         suits,
@@ -1544,11 +1600,18 @@ fn show_more_button(
     game.message = format_solution(&solutions, game.reveal_shown);
 }
 
+#[allow(clippy::type_complexity)] // Bevy query filters get verbose
 fn new_puzzle(
     mut game: ResMut<Game>,
     mut timer: ResMut<ViewTimer>,
     time: Res<Time>,
-    interactions: Query<&Interaction, (Changed<Interaction>, With<NewPuzzleButton>)>,
+    interactions: Query<
+        &Interaction,
+        (
+            Changed<Interaction>,
+            Or<(With<NewPuzzleButton>, With<NextPuzzleButton>)>,
+        ),
+    >,
 ) {
     if pressed(&interactions) {
         deal(&mut game, &mut timer, time.elapsed_secs());
@@ -1691,6 +1754,19 @@ fn update_board(
         *color = TextColor(if undo_enabled { TEXT } else { MUTED });
     }
 
+    // Mid-round: "Give up" is available; after the round: "Next puzzle".
+    let playing = game.round.phase == Phase::Playing;
+    set_display(
+        &mut nodes,
+        ui.give_up,
+        if playing { Display::Flex } else { Display::None },
+    );
+    set_display(
+        &mut nodes,
+        ui.next,
+        if playing { Display::None } else { Display::Flex },
+    );
+
     // "More" appears only when a reveal has additional solutions waiting.
     let more_display = if game.reveal_shown > 0 && game.reveal_shown < game.reveal_total {
         Display::Flex
@@ -1706,6 +1782,7 @@ fn update_board(
 
 fn update_countdown(
     timer: Res<ViewTimer>,
+    game: Res<Game>,
     ui: Res<BoardUi>,
     mut texts: Query<&mut Text>,
     mut nodes: Query<&mut Node>,
@@ -1716,8 +1793,8 @@ fn update_countdown(
     };
     set_text(&mut texts, ui.countdown, text);
 
-    // Only show the pill while a countdown is actually running.
-    let display = if timer.phase.seconds_left().is_some() {
+    // Only show the timer while a countdown is actually running mid-round.
+    let display = if timer.phase.seconds_left().is_some() && game.round.phase == Phase::Playing {
         Display::Flex
     } else {
         Display::None
