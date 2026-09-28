@@ -20,6 +20,6 @@ fn main() {
     cc::Build::new()
         .file("ios-shim/S24Scene.m")
         .flag("-fobjc-arc")
-        .flag(&format!("-isysroot{sysroot}"))
+        .flag(format!("-isysroot{sysroot}"))
         .compile("s24_scene_shim");
 }
