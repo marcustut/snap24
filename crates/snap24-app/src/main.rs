@@ -814,6 +814,7 @@ fn spawn_difficulty_select(mut commands: Commands, game: Res<Game>, fonts: Res<F
         .unwrap_or(0) as f32;
     menu_screen(&mut commands, &display, "Difficulty", |ui| {
         heading(ui, "Choose difficulty", 40.0, &display);
+        text_body(ui, tier_note(game.mode), 16.0, MUTED);
 
         // The tier reads big; its real parameters sit under it as tracked caps.
         ui.spawn(Node {
@@ -835,7 +836,7 @@ fn spawn_difficulty_select(mut commands: Commands, game: Res<Game>, fonts: Res<F
             ));
             tier.spawn((
                 DifficultyMeta,
-                Text::new(tracked(&tier_meta(game.difficulty))),
+                Text::new(tracked(&tier_meta(game.mode, game.difficulty))),
                 TextFont {
                     font_size: FontSize::Px(13.0),
                     ..default()
@@ -1308,11 +1309,25 @@ fn mode_buttons(
 }
 
 /// Real tier parameters, so the difficulty screen says something concrete.
-fn tier_meta(difficulty: Difficulty) -> String {
+/// Classic is always five cards (target 24) — only Custom follows the card
+/// ladder — so the advertised card count must depend on the mode.
+fn tier_meta(mode: Mode, difficulty: Difficulty) -> String {
+    let cards = match mode {
+        Mode::Classic => 5,
+        Mode::Custom => difficulty.card_count(),
+    };
     match difficulty.view_seconds() {
-        None => format!("{} cards · unlimited view", difficulty.card_count()),
-        Some(0) => format!("{} cards · never shown", difficulty.card_count()),
-        Some(seconds) => format!("{} cards · {seconds}s view", difficulty.card_count()),
+        None => format!("{cards} cards · unlimited view"),
+        Some(0) => format!("{cards} cards · never shown"),
+        Some(seconds) => format!("{cards} cards · {seconds}s view"),
+    }
+}
+
+/// What the tier actually changes, per mode.
+fn tier_note(mode: Mode) -> &'static str {
+    match mode {
+        Mode::Classic => "Five cards, target 24. Tiers set the view time.",
+        Mode::Custom => "Tiers set the card count and the target.",
     }
 }
 
@@ -1329,7 +1344,7 @@ fn difficulty_slider_changed(
             **label = game.difficulty.label().to_string();
         }
         for mut meta in &mut metas {
-            **meta = tracked(&tier_meta(game.difficulty));
+            **meta = tracked(&tier_meta(game.mode, game.difficulty));
         }
     }
 }
@@ -1936,6 +1951,23 @@ mod game_tests {
         game.total_score = 123;
         begin_game(&mut game, &mut timer, 0.0, &TargetEntry::default());
         assert_eq!(game.total_score, 0);
+    }
+
+    #[test]
+    fn classic_advertises_five_cards_whatever_the_tier() {
+        for difficulty in Difficulty::ALL {
+            assert!(
+                tier_meta(Mode::Classic, difficulty).starts_with("5 cards"),
+                "Classic always deals five cards: {difficulty:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn custom_advertises_the_tier_card_count() {
+        assert!(tier_meta(Mode::Custom, Difficulty::Hard).starts_with("4 cards"));
+        assert!(tier_meta(Mode::Custom, Difficulty::Insane).starts_with("3 cards"));
+        assert!(tier_meta(Mode::Custom, Difficulty::Easy).starts_with("5 cards"));
     }
 
     #[test]
