@@ -65,6 +65,24 @@ writes to the workspace `target/` directory.
 3. **Debuggability** — `bevy_mobile_example` keeps its template name; the app
    product is `Snap24.app` (`PRODUCT_NAME = Snap24`).
 
+## Adaptation (ticket 12)
+
+- **Scaling** — `fit_ui` sets `UiScale` from the window so the desktop-pixel
+  layout fits a phone: `min(width/720, height/1100)`, clamped. Fitting both axes
+  keeps landscape from overflowing.
+- **Safe areas** — Bevy exposes no inset API, so `screen_padding()` adds extra
+  top/bottom padding in design units on iOS (≈60pt/38pt after scaling) to clear
+  the notch and home indicator. It's an approximation, not true insets.
+- **Touch** — nothing to wire: Bevy's picking plugin turns touches into pointer
+  events, which already drive the UI `Interaction` the whole game uses (cards,
+  operator keys, slider, buttons).
+- **Haptics** — `haptics::impact()` on a merge and `haptics::success()` on a win,
+  via `objc2`/`objc2-ui-kit` (iOS only; no-ops elsewhere). Generators must be
+  used on the main thread, so `fx_system` takes Bevy's `NonSendMarker` to be
+  scheduled there. Gated by the same mute toggle as audio.
+- **Audio** — the embedded WAVs play through CoreAudio; the `Sound/Muted`
+  control works as on desktop.
+
 ## Known limitations / risks
 
 - **Layout is desktop-shaped.** The title screen's hero overflows the phone

@@ -12,3 +12,7 @@ bevy = { version = "0.19", features = ["wav"] }
 [features]
 # Scripted playthroughs + screenshots for debugging. Never enabled by default.
 devtools = []
+
+[target.'cfg(target_os = "ios")'.dependencies]
+objc2 = "0.6"
+objc2-ui-kit = "0.3"

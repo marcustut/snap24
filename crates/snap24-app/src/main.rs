@@ -16,6 +16,7 @@ mod logic;
 mod devtools;
 
 use bevy::audio::{AudioPlayer, AudioSource, PlaybackSettings};
+use bevy::ecs::system::NonSendMarker;
 use bevy::color::Mix;
 use bevy::input_focus::tab_navigation::{TabIndex, TabNavigationPlugin};
 use bevy::ui::{
@@ -472,6 +473,10 @@ fn main() {
     #[cfg(any(target_os = "ios", target_os = "android"))]
     app.insert_resource(bevy::winit::WinitSettings::mobile());
 
+    // Phones need the desktop-sized UI scaled down to fit.
+    #[cfg(target_os = "ios")]
+    app.add_systems(Update, fit_ui);
+
     #[cfg(feature = "devtools")]
     app.add_plugins(devtools::DevtoolsPlugin);
 
@@ -492,6 +497,37 @@ fn setup(mut commands: Commands) {
 struct Fonts {
     display: Handle<Font>,
     suit: Handle<Font>,
+}
+
+/// Haptics, no-op off iOS. Fired on the main thread only.
+mod haptics {
+    #[cfg(target_os = "ios")]
+    mod imp {
+        use objc2::MainThreadMarker;
+        use objc2_ui_kit::{UIImpactFeedbackGenerator, UINotificationFeedbackGenerator, UINotificationFeedbackType};
+
+        pub fn impact() {
+            if let Some(mtm) = MainThreadMarker::new() {
+                let generator = unsafe { UIImpactFeedbackGenerator::new(mtm) };
+                unsafe { generator.impactOccurred() };
+            }
+        }
+
+        pub fn success() {
+            if let Some(mtm) = MainThreadMarker::new() {
+                let generator = unsafe { UINotificationFeedbackGenerator::new(mtm) };
+                unsafe { generator.notificationOccurred(UINotificationFeedbackType::Success) };
+            }
+        }
+    }
+
+    #[cfg(not(target_os = "ios"))]
+    mod imp {
+        pub fn impact() {}
+        pub fn success() {}
+    }
+
+    pub use imp::{impact, success};
 }
 
 /// The four generated UI sounds, embedded in the binary.
@@ -578,7 +614,7 @@ fn menu_screen(
                 height: percent(100),
                 flex_direction: FlexDirection::Column,
                 align_items: AlignItems::Center,
-                padding: UiRect::all(px(28)),
+                padding: screen_padding(),
                 ..default()
             },
             BackgroundColor(BG),
@@ -707,6 +743,43 @@ fn heading(parent: &mut ChildSpawnerCommands, text: &str, size: f32, font: &Hand
         },
         TextColor(TEXT),
     ));
+}
+
+/// Screen padding. On iOS the extra top/bottom keeps content clear of the notch
+/// and home indicator (Bevy exposes no safe-area insets), sized in design units
+/// so it survives the UI scale applied by `fit_ui`.
+fn screen_padding() -> UiRect {
+    #[cfg(target_os = "ios")]
+    {
+        UiRect {
+            left: px(24),
+            right: px(24),
+            top: px(110),
+            bottom: px(70),
+        }
+    }
+    #[cfg(not(target_os = "ios"))]
+    {
+        UiRect::all(px(28))
+    }
+}
+
+/// On phones the desktop fixed pixel sizes are far too large, so scale the
+/// whole UI down against a phone-appropriate design width.
+#[cfg(target_os = "ios")]
+fn fit_ui(windows: Query<&Window>, mut scale: ResMut<UiScale>) {
+    const DESIGN_WIDTH: f32 = 720.0;
+    const DESIGN_HEIGHT: f32 = 1100.0;
+    let Ok(window) = windows.single() else {
+        return;
+    };
+    // Fit both axes so landscape (short height) doesn't overflow either.
+    let target = (window.width() / DESIGN_WIDTH)
+        .min(window.height() / DESIGN_HEIGHT)
+        .clamp(0.35, 1.2);
+    if (scale.0 - target).abs() > 0.001 {
+        scale.0 = target;
+    }
 }
 
 /// A subtle warm radial glow from the top, fading to the base colour.
@@ -1055,7 +1128,7 @@ fn spawn_board(mut commands: Commands, fonts: Res<Fonts>) {
                 height: percent(100),
                 justify_content: JustifyContent::Center,
                 align_items: AlignItems::Center,
-                padding: UiRect::all(px(24)),
+                padding: screen_padding(),
                 ..default()
             },
             BackgroundColor(BG),
@@ -1063,6 +1136,7 @@ fn spawn_board(mut commands: Commands, fonts: Res<Fonts>) {
         ))
         .with_children(|root| {
             root.spawn(Node {
+                width: percent(100),
                 flex_direction: FlexDirection::Column,
                 justify_content: JustifyContent::Center,
                 align_items: AlignItems::Center,
@@ -1152,6 +1226,7 @@ fn spawn_board(mut commands: Commands, fonts: Res<Fonts>) {
                 });
 
                 ui.spawn(Node {
+                    width: percent(100),
                     flex_direction: FlexDirection::Row,
                     column_gap: px(14),
                     flex_wrap: FlexWrap::Wrap,
@@ -1286,6 +1361,7 @@ fn spawn_board(mut commands: Commands, fonts: Res<Fonts>) {
 
                 // In-play actions, then a gap, then puzzle management.
                 ui.spawn(Node {
+                    width: percent(100),
                     flex_direction: FlexDirection::Row,
                     column_gap: px(14),
                     flex_wrap: FlexWrap::Wrap,
@@ -1580,9 +1656,11 @@ fn animate_flips(
 
 /// Watches `Game` for deal / merge / flip / result and fires the matching
 /// one-shot animation.
+#[allow(clippy::too_many_arguments)]
 fn fx_system(
     game: Res<Game>,
     sfx: Res<Sfx>,
+    _marker: NonSendMarker,
     ui: Option<Res<BoardUi>>,
     mut commands: Commands,
     mut prev: ResMut<FxPrev>,
@@ -1607,6 +1685,7 @@ fn fx_system(
     } else if game.round.cards.len() < prev.cards.len() {
         if !game.muted {
             play(&mut commands, &sfx.merge);
+            haptics::impact();
         }
         // The merged result sits where the first change appears.
         let changed = (0..game.round.cards.len())
@@ -1646,6 +1725,9 @@ fn fx_system(
                     &sfx.lose
                 };
                 play(&mut commands, sound);
+                if game.round.phase == Phase::Won {
+                    haptics::success();
+                }
             }
         }
         prev.phase = Some(game.round.phase);
