@@ -16,8 +16,10 @@
 //! pick a good one).
 //!
 //! Steps: `play`, `mode:classic|custom`, `diff:1..6`, `card:N`, `op:+|-|*|/`,
-//! `undo`, `new`, `menu`, `back`, `wait:N`, `shot:NAME`. Set `SNAP24_SEED` for a
-//! reproducible deal.
+//! `undo`, `new`, `menu`, `back`, `target:<n|random>`, `start`, `hint`,
+//! `reveal`, `more`, `step` (play the next optimal merge), `solve` (play the
+//! whole board), `wait:N`, `shot:NAME`. Set `SNAP24_SEED` for a reproducible
+//! deal.
 
 use crate::logic::{Op, Phase};
 use crate::{
@@ -25,7 +27,7 @@ use crate::{
 };
 use bevy::prelude::*;
 use bevy::render::view::screenshot::{save_to_disk, Screenshot};
-use snap24_core::{Difficulty, Mode};
+use snap24_core::{first_move, Difficulty, Mode, Rational};
 
 pub struct DevtoolsPlugin;
 
@@ -76,6 +78,10 @@ enum Step {
     Hint,
     Reveal,
     More,
+    /// Play the next optimal move (core `first_move`) — one merge.
+    Auto,
+    /// Play the whole solution to the target.
+    AutoSolve,
     Wait(u32),
     Shot(String),
 }
@@ -117,6 +123,8 @@ fn parse(script: &str) -> Vec<Step> {
             ("hint", _) => steps.push(Step::Hint),
             ("reveal", _) => steps.push(Step::Reveal),
             ("more", _) => steps.push(Step::More),
+            ("step", _) => steps.push(Step::Auto),
+            ("solve", _) => steps.push(Step::AutoSolve),
             ("menu", _) => steps.push(Step::Menu),
             ("back", _) => steps.push(Step::Back),
             ("wait", Some(value)) => steps.push(Step::Wait(value.parse().unwrap_or(1))),
@@ -179,6 +187,12 @@ fn run_script(
         Step::Card(index) => game.play_card(index),
         Step::Op(op) => game.play_op(op),
         Step::Undo => game.undo(),
+        Step::Auto => {
+            solve_step(&mut game);
+        }
+        Step::AutoSolve => {
+            while game.round.phase == Phase::Playing && solve_step(&mut game) {}
+        }
         Step::Hint => {
             if game.round.phase == Phase::Playing {
                 game.hint_level = (game.hint_level + 1).min(4);
@@ -236,6 +250,44 @@ fn run_script(
 
     // Let the transition/UI settle before the next step.
     script.wait = script.wait.max(2);
+}
+
+/// Plays one optimal merge on the current board. Returns false if the board is
+/// not in play or no move is available.
+fn solve_step(game: &mut Game) -> bool {
+    if game.round.phase != Phase::Playing {
+        return false;
+    }
+    let Some(mv) = first_move(&game.round.cards, game.round.target) else {
+        return false;
+    };
+    let Some(left) = value_index(&game.round.cards, mv.left, None) else {
+        return false;
+    };
+    let Some(right) = value_index(&game.round.cards, mv.right, Some(left)) else {
+        return false;
+    };
+    game.play_card(left);
+    game.play_op(op_of(mv.op));
+    game.play_card(right);
+    true
+}
+
+fn value_index(cards: &[Rational], value: Rational, skip: Option<usize>) -> Option<usize> {
+    cards
+        .iter()
+        .enumerate()
+        .find(|(index, card)| **card == value && Some(*index) != skip)
+        .map(|(index, _)| index)
+}
+
+fn op_of(symbol: char) -> Op {
+    match symbol {
+        '-' => Op::Sub,
+        '*' => Op::Mul,
+        '/' => Op::Div,
+        _ => Op::Add,
+    }
 }
 
 fn capture_pending(script: &mut Script, commands: &mut Commands) {
