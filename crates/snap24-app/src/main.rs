@@ -23,8 +23,8 @@ use bevy::ui::{
 use bevy::picking::hover::Hovered;
 use bevy::prelude::*;
 use bevy::ui_widgets::{
-    observe, slider_self_update, Slider, SliderOrientation, SliderRange, SliderStep, SliderThumb,
-    SliderValue, TrackClick,
+    observe, slider_self_update, Slider, SliderOrientation, SliderPrecision, SliderRange,
+    SliderStep, SliderThumb, SliderValue, TrackClick,
 };
 use logic::{round_score, MergeError, Op, Phase, Round, ViewPhase};
 use snap24_core::{
@@ -870,6 +870,8 @@ fn spawn_difficulty_select(mut commands: Commands, game: Res<Game>, fonts: Res<F
                 SliderValue(start),
                 SliderRange::new(0.0, (Difficulty::ALL.len() - 1) as f32),
                 SliderStep(1.0),
+                // Round to whole tiers while dragging, so the thumb snaps in.
+                SliderPrecision(0),
                 TabIndex(0),
                 observe(slider_self_update),
                 Children::spawn((
