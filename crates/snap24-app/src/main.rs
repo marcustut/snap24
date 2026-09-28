@@ -15,6 +15,7 @@ mod logic;
 #[cfg(feature = "devtools")]
 mod devtools;
 
+use bevy::audio::{AudioPlayer, AudioSource, PlaybackSettings};
 use bevy::color::Mix;
 use bevy::input_focus::tab_navigation::{TabIndex, TabNavigationPlugin};
 use bevy::ui::{
@@ -107,6 +108,8 @@ struct Game {
     dealt: Vec<i64>,
     hints_used: u32,
     hint_level: u32,
+    /// Session-wide sound mute.
+    muted: bool,
     message: String,
     /// How many reveal solutions are currently shown, and how many exist.
     reveal_shown: usize,
@@ -128,6 +131,7 @@ impl Game {
             dealt: Vec::new(),
             hints_used: 0,
             hint_level: 0,
+            muted: false,
             message: String::new(),
             reveal_shown: 0,
             reveal_total: 0,
@@ -201,6 +205,7 @@ impl Default for ViewTimer {
 struct BoardUi {
     target: Entity,
     mode_chip: Entity,
+    mute_label: Entity,
     countdown: Entity,
     countdown_pill: Entity,
     status: Entity,
@@ -355,6 +360,9 @@ struct ShowMoreButton;
 #[derive(Component)]
 struct TargetLabel;
 
+#[derive(Component)]
+struct MuteButton;
+
 /// Buttons get a hover/press tint from their base colour.
 #[derive(Component)]
 struct Hoverable {
@@ -437,6 +445,7 @@ fn main() {
                 card_click,
                 operator_click,
                 undo_click,
+                mute_click,
                 hint_button,
                 reveal_button,
                 show_more_button,
@@ -454,6 +463,7 @@ fn main() {
     app.add_plugins(devtools::DevtoolsPlugin);
 
     install_fonts(&mut app);
+    install_audio(&mut app);
 
     app.run();
 }
@@ -479,6 +489,43 @@ fn add_font(fonts: &mut Assets<Font>, path: &str) -> Handle<Font> {
             Handle::default()
         }
     }
+}
+
+/// The four generated UI sounds, embedded in the binary.
+#[derive(Resource, Default)]
+struct Sfx {
+    deal: Handle<AudioSource>,
+    merge: Handle<AudioSource>,
+    win: Handle<AudioSource>,
+    lose: Handle<AudioSource>,
+}
+
+fn install_audio(app: &mut App) {
+    let (deal, merge, win, lose) = {
+        let mut assets = app.world_mut().resource_mut::<Assets<AudioSource>>();
+        let mut add = |bytes: &[u8]| {
+            assets.add(AudioSource {
+                bytes: bytes.to_vec().into(),
+            })
+        };
+        (
+            add(include_bytes!("../assets/sfx/deal.wav")),
+            add(include_bytes!("../assets/sfx/merge.wav")),
+            add(include_bytes!("../assets/sfx/win.wav")),
+            add(include_bytes!("../assets/sfx/lose.wav")),
+        )
+    };
+    app.world_mut().insert_resource(Sfx {
+        deal,
+        merge,
+        win,
+        lose,
+    });
+}
+
+/// Fire-and-forget: the entity despawns when playback finishes.
+fn play(commands: &mut Commands, handle: &Handle<AudioSource>) {
+    commands.spawn((AudioPlayer::new(handle.clone()), PlaybackSettings::DESPAWN));
 }
 
 /// Installs the three fonts at build time, before any system runs, so the very
@@ -975,6 +1022,7 @@ fn spawn_board(mut commands: Commands, fonts: Res<Fonts>) {
     let suit_font = fonts.suit.clone();
     let mut target = Entity::PLACEHOLDER;
     let mut mode_chip = Entity::PLACEHOLDER;
+    let mut mute_label = Entity::PLACEHOLDER;
     let mut countdown = Entity::PLACEHOLDER;
     let mut countdown_pill = Entity::PLACEHOLDER;
     let mut status = Entity::PLACEHOLDER;
@@ -1036,7 +1084,18 @@ fn spawn_board(mut commands: Commands, fonts: Res<Fonts>) {
                         text_static(mark, "SNAP", 28.0, TEXT, &display);
                         text_static(mark, "24", 28.0, GOLD, &display);
                     });
-                    mode_chip = text_entity(bar, 13.0, MUTED);
+                    bar.spawn(Node {
+                        flex_direction: FlexDirection::Row,
+                        align_items: AlignItems::Center,
+                        column_gap: px(22),
+                        ..default()
+                    })
+                    .with_children(|right| {
+                        mode_chip = text_entity(right, 13.0, MUTED);
+                        let mut mute_text = Entity::PLACEHOLDER;
+                        ghost_button_id(right, "Sound", MuteButton, &mut mute_text);
+                        mute_label = mute_text;
+                    });
                 });
 
                 // Timer: tracked caps over a thin brass rule; hidden when idle.
@@ -1249,6 +1308,7 @@ fn spawn_board(mut commands: Commands, fonts: Res<Fonts>) {
     commands.insert_resource(BoardUi {
         target,
         mode_chip,
+        mute_label,
         countdown,
         countdown_pill,
         status,
@@ -1518,6 +1578,7 @@ fn animate_flips(
 /// one-shot animation.
 fn fx_system(
     game: Res<Game>,
+    sfx: Res<Sfx>,
     ui: Option<Res<BoardUi>>,
     mut commands: Commands,
     mut prev: ResMut<FxPrev>,
@@ -1535,8 +1596,14 @@ fn fx_system(
                 from: 0.5,
             });
         }
+        if !game.muted {
+            play(&mut commands, &sfx.deal);
+        }
         prev.dealt = game.dealt.clone();
     } else if game.round.cards.len() < prev.cards.len() {
+        if !game.muted {
+            play(&mut commands, &sfx.merge);
+        }
         // The merged result sits where the first change appears.
         let changed = (0..game.round.cards.len())
             .find(|&i| game.round.cards.get(i) != prev.cards.get(i))
@@ -1568,6 +1635,14 @@ fn fx_system(
                 duration: 0.35,
                 from: 1.5,
             });
+            if !game.muted {
+                let sound = if game.round.phase == Phase::Won {
+                    &sfx.win
+                } else {
+                    &sfx.lose
+                };
+                play(&mut commands, sound);
+            }
         }
         prev.phase = Some(game.round.phase);
     }
@@ -1629,6 +1704,15 @@ fn undo_click(
 ) {
     if pressed(&interactions) {
         game.undo();
+    }
+}
+
+fn mute_click(
+    mut game: ResMut<Game>,
+    interactions: Query<&Interaction, (Changed<Interaction>, With<MuteButton>)>,
+) {
+    if pressed(&interactions) {
+        game.muted = !game.muted;
     }
 }
 
@@ -1755,6 +1839,11 @@ fn update_board(
         &mut texts,
         ui.mode_chip,
         tracked(&format!("{} · {}", game.mode.label(), game.difficulty.label())),
+    );
+    set_text(
+        &mut texts,
+        ui.mute_label,
+        if game.muted { "Muted" } else { "Sound" }.to_string(),
     );
     set_text(&mut texts, ui.status, game.status());
     if let Ok(mut color) = text_colors.get_mut(ui.status) {

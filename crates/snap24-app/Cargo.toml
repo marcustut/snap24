@@ -6,7 +6,8 @@ license.workspace = true
 
 [dependencies]
 snap24-core = { path = "../snap24-core" }
-bevy = "0.19"
+# `wav` for the generated UI sounds (default features only ship vorbis).
+bevy = { version = "0.19", features = ["wav"] }
 
 [features]
 # Scripted playthroughs + screenshots for debugging. Never enabled by default.
