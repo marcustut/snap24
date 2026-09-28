@@ -64,6 +64,11 @@ impl Server {
         self.send(json!({"jsonrpc": "2.0", "method": "notifications/initialized"}));
     }
 
+    /// Call a tool and return the whole result (for structured content).
+    fn call_result(&mut self, tool: &str, arguments: Value) -> Value {
+        self.request("tools/call", json!({"name": tool, "arguments": arguments}))
+    }
+
     /// Call a tool and return its first text content block.
     fn call(&mut self, tool: &str, arguments: Value) -> String {
         let result = self.request("tools/call", json!({"name": tool, "arguments": arguments}));
@@ -103,10 +108,41 @@ fn tools_work_over_stdio() {
         vec![
             "explain",
             "hint",
+            "render_board",
             "reveal",
             "start_puzzle",
             "submit_solution"
         ]
+    );
+
+    // 1b. render_board advertises the MCP Apps widget via _meta.ui.resourceUri.
+    let render = tools["tools"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|t| t["name"] == "render_board")
+        .expect("render_board tool");
+    assert_eq!(render["_meta"]["ui"]["resourceUri"], "ui://snap24/board.html");
+
+    // 1c. The widget resource is listed with the MCP Apps MIME type and reads back.
+    let resources = server.request("resources/list", json!({}));
+    assert!(
+        resources["resources"].as_array().unwrap().iter().any(|r| {
+            r["uri"] == "ui://snap24/board.html"
+                && r["mimeType"] == "text/html;profile=mcp-app"
+        }),
+        "resources: {resources}"
+    );
+    let read = server.request(
+        "resources/read",
+        json!({"uri": "ui://snap24/board.html"}),
+    );
+    let html = read["contents"][0]["text"].as_str().unwrap_or_default();
+    assert!(html.contains("ui/notifications/tool-result"), "bridge missing");
+    assert!(html.contains("tools/call"), "bridge missing");
+    assert!(
+        read["contents"][0]["_meta"]["ui"]["csp"]["connectDomains"].is_array(),
+        "CSP must be declared on the resource contents: {read}"
     );
 
     // 2. Deal a deterministic Classic puzzle.
@@ -118,6 +154,12 @@ fn tools_work_over_stdio() {
         .expect("puzzle id")
         .trim()
         .to_string();
+
+    // 2b. render_board returns structured content for the widget.
+    let view = server.call_result("render_board", json!({"puzzle_id": puzzle_id}));
+    assert_eq!(view["structuredContent"]["target_n"], 24, "view: {view}");
+    assert_eq!(view["structuredContent"]["puzzle_id"], puzzle_id);
+    assert!(view["structuredContent"]["view_seconds"].is_null(), "Easy is unlimited: {view}");
 
     // 3. Hints advance one level per call, and an explicit level works.
     let h1 = server.call("hint", json!({"puzzle_id": puzzle_id}));

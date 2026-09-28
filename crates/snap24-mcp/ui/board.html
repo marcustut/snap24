@@ -1,0 +1,269 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Snap 24</title>
+<style>
+  :root { color-scheme: dark; }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; padding: 18px 16px 22px;
+    background: radial-gradient(120% 90% at 50% 0%, #221a12 0%, #0f0c0a 60%, #090706 100%);
+    color: #efe7da; font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, sans-serif;
+    display: flex; flex-direction: column; align-items: center; gap: 14px;
+  }
+  .bar { width: 100%; display: flex; justify-content: space-between; align-items: center; }
+  .mark { font-family: Georgia, "Times New Roman", serif; font-size: 20px; }
+  .mark b { color: #c9a24a; }
+  .chip { font-size: 11px; letter-spacing: .22em; text-transform: uppercase; color: #8a7f6f; }
+  .timer { font-size: 12px; letter-spacing: .22em; text-transform: uppercase; color: #c9a24a; min-height: 16px; }
+  .timer::after { content: ""; display: block; height: 1px; background: #c9a24a; margin-top: 6px; }
+  .target { display: flex; align-items: baseline; gap: 12px; }
+  .target span { font-size: 11px; letter-spacing: .3em; text-transform: uppercase; color: #8a7f6f; }
+  .target strong { font-family: Georgia, serif; font-size: 52px; line-height: .9; color: #f3ece0; }
+  .hand { display: flex; gap: 10px; flex-wrap: wrap; justify-content: center; }
+  .card {
+    width: 74px; height: 102px; border-radius: 14px; border: 2px solid transparent;
+    background: #f3ece0; color: #1a140f; padding: 8px 9px; cursor: pointer;
+    display: flex; flex-direction: column; gap: 2px; align-items: flex-start;
+    font-weight: 700; transition: transform .12s ease;
+  }
+  .card .rank { font-family: Georgia, serif; font-size: 27px; line-height: 1; }
+  .card .suit { font-size: 19px; }
+  .card.red .rank, .card.red .suit { color: #b23a2e; }
+  .card.token { background: #15110d; color: #c9a24a; box-shadow: inset 0 0 0 1.5px #c9a24a; justify-content: center; align-items: center; }
+  .card.token .rank { font-size: 24px; color: #c9a24a; }
+  .card.down { background: #16110d; color: #8a7f6f; align-items: center; justify-content: center; }
+  .card.down .rank { font-size: 26px; }
+  .card.sel { border-color: #c9a24a; transform: translateY(-7px); }
+  .keys { display: flex; gap: 10px; }
+  .key {
+    width: 54px; height: 54px; border-radius: 50%; border: 1px solid #3a332a; background: #0f0c0a;
+    color: #efe7da; font-size: 20px; cursor: pointer;
+  }
+  .key.sel { background: #c9a24a; color: #1a140f; border-color: #c9a24a; }
+  .status { font-size: 14px; color: #efe7da; min-height: 18px; text-align: center; }
+  .msg { font-size: 13px; color: #c9a24a; max-width: 30rem; white-space: pre-wrap; text-align: center; }
+  .controls { display: flex; gap: 16px; flex-wrap: wrap; justify-content: center; }
+  .ghost {
+    background: none; border: 0; border-bottom: 1px solid #3a332a; color: #efe7da;
+    font-size: 13px; padding: 2px 4px; cursor: pointer;
+  }
+  .ghost:disabled { color: #6b6257; border-color: transparent; cursor: default; }
+  .primary { background: #c9a24a; color: #1a140f; border: 0; border-radius: 999px; padding: 10px 22px; font-size: 15px; cursor: pointer; }
+</style>
+</head>
+<body>
+  <div class="bar">
+    <div class="mark">SNAP <b>24</b></div>
+    <div class="chip" id="chip"></div>
+  </div>
+  <div class="timer" id="timer"></div>
+  <div class="target"><span>Target</span><strong id="target">—</strong></div>
+  <div class="hand" id="hand"></div>
+  <div class="keys" id="keys"></div>
+  <div class="status" id="status"></div>
+  <div class="msg" id="msg"></div>
+  <div class="controls">
+    <button class="ghost" id="hint">Hint</button>
+    <button class="ghost" id="reveal">Reveal</button>
+    <button class="ghost" id="undo">Undo</button>
+    <button class="ghost" id="giveup">Give up</button>
+  </div>
+  <button class="primary" id="next" hidden>Next puzzle</button>
+
+<script>
+(() => {
+  "use strict";
+
+  // ---- MCP Apps bridge: JSON-RPC over postMessage --------------------------
+  const pending = new Map();
+  let nextRequestId = 1;
+
+  function request(method, params) {
+    const id = nextRequestId++;
+    window.parent.postMessage({ jsonrpc: "2.0", id, method, params }, "*");
+    return new Promise((resolve, reject) => pending.set(id, { resolve, reject }));
+  }
+
+  window.addEventListener("message", (event) => {
+    if (event.source !== window.parent) return;
+    const m = event.data;
+    if (!m || m.jsonrpc !== "2.0") return;
+
+    if (m.id !== undefined && pending.has(m.id)) {
+      const p = pending.get(m.id);
+      pending.delete(m.id);
+      if (m.error) p.reject(m.error); else p.resolve(m.result);
+      return;
+    }
+    // Tool results arrive here. Everything is untrusted input.
+    if (m.method === "ui/notifications/tool-result") {
+      const sc = m.params && m.params.structuredContent;
+      if (sc && sc.puzzle_id) startRound(sc);
+    }
+  });
+
+  const callTool = (name, args) =>
+    request("tools/call", { name, arguments: args }).then((r) => {
+      if (r && r.structuredContent && r.structuredContent.puzzle_id) return r.structuredContent;
+      if (r && Array.isArray(r.content)) {
+        const text = r.content.filter((c) => c && c.type === "text").map((c) => c.text).join("\n");
+        return text;
+      }
+      return "";
+    });
+
+  // ---- exact rationals (no floats in the maths) ----------------------------
+  const gcd = (a, b) => { a = Math.abs(a); b = Math.abs(b); while (b) { const t = a % b; a = b; b = t; } return a || 1; };
+  const rat = (n, d = 1) => { if (d < 0) { n = -n; d = -d; } const g = gcd(n, d); return { n: n / g, d: d / g }; };
+  const add = (a, b) => rat(a.n * b.d + b.n * a.d, a.d * b.d);
+  const sub = (a, b) => rat(a.n * b.d - b.n * a.d, a.d * b.d);
+  const mul = (a, b) => rat(a.n * b.n, a.d * b.d);
+  const div = (a, b) => (b.n === 0 ? null : rat(a.n * b.d, a.d * b.n));
+  const eq = (a, b) => a.n === b.n && a.d === b.d;
+  const fmt = (a) => (a.d === 1 ? String(a.n) : a.n + "/" + a.d);
+  const rank = (n) => ({ 1: "A", 11: "J", 12: "Q", 13: "K" })[n] || String(n);
+
+  // ---- state ---------------------------------------------------------------
+  let S = { id: null, mode: "classic", difficulty: "easy", target: rat(24), cards: [], sel: [], op: null, phase: "playing", view: null, left: null, history: [] };
+  let timer = null;
+  const $ = (id) => document.getElementById(id);
+  const deep = () => JSON.parse(JSON.stringify({ cards: S.cards, sel: S.sel, op: S.op, phase: S.phase }));
+
+  function startRound(view) {
+    clearInterval(timer);
+    S.id = view.puzzle_id;
+    S.mode = view.mode;
+    S.difficulty = view.difficulty;
+    S.target = rat(Number(view.target_n) || 0, Number(view.target_d) || 1);
+    S.cards = (view.cards || []).map((v) => ({ v: rat(Number(v) || 0), revealed: Number(view.view_seconds) !== 0, token: false }));
+    S.sel = []; S.op = null; S.phase = "playing"; S.history = [];
+    S.view = view.view_seconds;
+    S.left = typeof view.view_seconds === "number" ? view.view_seconds : null;
+    $("chip").textContent = view.mode + " · " + view.difficulty;
+    setMessage("");
+    if (S.left !== null && S.left > 0) {
+      timer = setInterval(() => {
+        S.left = Math.max(0, S.left - 0.25);
+        if (S.left === 0 && S.cards.some((c) => c.revealed)) { S.cards.forEach((c) => (c.revealed = false)); timer && clearInterval(timer); }
+        paint();
+      }, 250);
+    }
+    paint();
+  }
+
+  function setMessage(text) { $("msg").textContent = typeof text === "string" ? text : ""; }
+
+  function status() {
+    if (S.phase === "won") return "Solved!";
+    if (S.phase === "lost") return "Not " + fmt(S.target) + " — you made " + fmt(S.cards[0].v) + ".";
+    if (S.sel.length === 0) return S.cards.length + " cards left — tap a card";
+    if (!S.op) return "Pick an operator";
+    return "Tap the second card";
+  }
+
+  function expression() {
+    // Leaves are the original card ranks, so the server can validate exactly.
+    return S.cards[0].expr;
+  }
+
+  function paint() {
+    $("target").textContent = fmt(S.target);
+    $("timer").textContent = S.left !== null && S.left > 0 ? "Hiding in " + Math.ceil(S.left) + "s" : "";
+    $("status").textContent = status();
+
+    const hand = $("hand");
+    hand.textContent = "";
+    S.cards.forEach((card, i) => {
+      const el = document.createElement("button");
+      el.className = "card" + (card.token ? " token" : "") + (card.revealed ? "" : " down") + (S.sel.includes(i) ? " sel" : "");
+      const r = document.createElement("div");
+      r.className = "rank";
+      r.textContent = card.revealed ? (card.token ? fmt(card.v) : rank(card.v.n)) : "?";
+      el.appendChild(r);
+      if (!card.token && card.revealed && card.v.d === 1) {
+        const s = document.createElement("div");
+        s.className = "suit";
+        s.textContent = "♠";
+        el.appendChild(s);
+      }
+      el.addEventListener("click", () => tapCard(i));
+      hand.appendChild(el);
+    });
+
+    const keys = $("keys");
+    keys.textContent = "";
+    [["+", add], ["−", sub], ["×", mul], ["÷", div]].forEach(([sym], k) => {
+      const b = document.createElement("button");
+      b.className = "key" + (S.op === sym ? " sel" : "");
+      b.textContent = sym;
+      b.addEventListener("click", () => tapOp(sym));
+      keys.appendChild(b);
+    });
+
+    $("undo").disabled = S.history.length === 0 || S.phase !== "playing";
+    $("giveup").hidden = S.phase !== "playing";
+    $("next").hidden = S.phase === "playing";
+  }
+
+  function tapCard(i) {
+    if (S.phase !== "playing") return;
+    if (S.sel.length === 0) { S.sel = [i]; }
+    else if (!S.op) { S.sel = S.sel[0] === i ? [] : [i]; }
+    else if (S.sel[0] !== i) { merge(S.sel[0], i); }
+    paint();
+  }
+
+  function tapOp(sym) {
+    if (S.phase !== "playing" || S.sel.length !== 1) return;
+    S.op = sym;
+    paint();
+  }
+
+  function merge(a, b) {
+    S.history.push(deep());
+    const A = S.cards[a], B = S.cards[b];
+    const result = { "+": add, "−": sub, "×": mul, "÷": div }[S.op](A.v, B.v);
+    if (!result) { S.history.pop(); setMessage("Can't divide by zero."); return; }
+    const expr = "(" + A.expr + " " + ({ "−": "-", "×": "*", "÷": "/" }[S.op] || S.op) + " " + B.expr + ")";
+    const lo = Math.min(a, b), hi = Math.max(a, b);
+    S.cards.splice(hi, 1); S.cards.splice(lo, 1);
+    S.cards.splice(lo, 0, { v: result, revealed: true, token: true, expr });
+    S.sel = []; S.op = null; setMessage("");
+    if (S.cards.length === 1) finish();
+  }
+
+  async function finish() {
+    S.phase = eq(S.cards[0].v, S.target) ? "won" : "lost";
+    paint();
+    // Authoritative check: the server validates the expression we built.
+    const verdict = await callTool("submit_solution", { puzzle_id: S.id, expression: expression() });
+    if (typeof verdict === "string" && verdict) setMessage(verdict);
+  }
+
+  $("undo").addEventListener("click", () => {
+    const prev = S.history.pop();
+    if (!prev) return;
+    S.cards = prev.cards; S.sel = prev.sel; S.op = prev.op; S.phase = prev.phase;
+    setMessage(""); paint();
+  });
+
+  $("hint").addEventListener("click", async () => setMessage(await callTool("hint", { puzzle_id: S.id })));
+  $("reveal").addEventListener("click", async () => setMessage(await callTool("reveal", { puzzle_id: S.id })));
+
+  async function newPuzzle() {
+    const dealt = await callTool("start_puzzle", { mode: S.mode, difficulty: S.difficulty });
+    const id = typeof dealt === "string" && /puzzle_id:\s*(\S+)/.exec(dealt) ? RegExp.$1 : S.id;
+    const view = await callTool("render_board", { puzzle_id: id });
+    if (view && view.puzzle_id) startRound(view);
+  }
+  $("next").addEventListener("click", newPuzzle);
+  $("giveup").addEventListener("click", newPuzzle);
+
+  paint();
+})();
+</script>
+</body>
+</html>

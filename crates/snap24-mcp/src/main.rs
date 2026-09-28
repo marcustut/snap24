@@ -11,6 +11,7 @@
 //!   hint            — progressive hint (which cards → operator → result → full)
 //!   reveal          — distinct solutions for the current puzzle
 //!   explain         — a step-by-step solution in words
+//!   render_board    — returns the MCP Apps widget (`ui://snap24/board.html`)
 //!
 //! Puzzles live in memory keyed by an opaque id with a 30-minute TTL.
 
@@ -20,9 +21,16 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use rmcp::handler::server::wrapper::Parameters;
-use rmcp::model::{ServerCapabilities, ServerConfig};
+use rmcp::model::{
+    ListResourcesResult, MetaObject, PaginatedRequestParams, ReadResourceRequestParams,
+    ReadResourceResponse, ReadResourceResult, Resource, ResourceContents, ServerCapabilities,
+    ServerConfig,
+};
+use rmcp::service::{RequestContext, RoleServer};
 use rmcp::transport::stdio;
-use rmcp::{schemars, tool, tool_handler, tool_router, ServerHandler, ServiceExt};
+use rmcp::{
+    schemars, tool, tool_handler, tool_router, ErrorData, Json, ServerHandler, ServiceExt,
+};
 use serde::Deserialize;
 use snap24_core::{
     evaluate, first_move, generate, generate_targeted, move_sequence, solutions_infix, Difficulty,
@@ -44,6 +52,43 @@ struct Session {
 struct Snap24 {
     sessions: Arc<Mutex<HashMap<String, Session>>>,
     seq: Arc<AtomicU64>,
+}
+
+// --------------------------------------------------------------------------- //
+// MCP Apps UI                                                                  //
+// --------------------------------------------------------------------------- //
+
+/// The widget resource. Treat it as a cache key: bump `v1` on a breaking change.
+const UI_URI: &str = "ui://snap24/board.html";
+/// MCP Apps UI MIME type.
+const UI_MIME: &str = "text/html;profile=mcp-app";
+const BOARD_HTML: &str = include_str!("../ui/board.html");
+
+/// `_meta` that links a tool to the widget (`_meta.ui.resourceUri`).
+fn ui_meta() -> MetaObject {
+    // The widget makes no network calls and loads no external assets (it talks
+    // to the host over postMessage only), so the CSP allowlists are empty.
+    let value = serde_json::json!({
+        "ui": {
+            "resourceUri": UI_URI,
+            "prefersBorder": true,
+            "csp": { "connectDomains": [], "resourceDomains": [] }
+        }
+    });
+    MetaObject(value.as_object().expect("object").clone())
+}
+
+/// What `render_board` hands the widget (and mirrors as text for the model).
+#[derive(serde::Serialize, schemars::JsonSchema)]
+struct BoardView {
+    puzzle_id: String,
+    mode: String,
+    difficulty: String,
+    cards: Vec<i64>,
+    target_n: i64,
+    target_d: i64,
+    /// `None` = visible indefinitely, `0` = never shown (Blind).
+    view_seconds: Option<u32>,
 }
 
 // --------------------------------------------------------------------------- //
@@ -346,18 +391,78 @@ impl Snap24 {
             ))
         })
     }
+
+    #[tool(
+        description = "Render the Snap 24 board widget. Deal with start_puzzle first, then pass its puzzle_id here to show the interactive board.",
+        meta = ui_meta()
+    )]
+    fn render_board(&self, Parameters(p): Parameters<IdParams>) -> Result<Json<BoardView>, String> {
+        let id = p.puzzle_id.clone();
+        self.with_session(&id, |session| {
+            let (n, d) = session.puzzle.target.parts();
+            Ok(Json(BoardView {
+                puzzle_id: id.clone(),
+                mode: session.puzzle.mode.label().to_string(),
+                difficulty: session.puzzle.difficulty.label().to_string(),
+                cards: session.puzzle.cards.clone(),
+                target_n: n,
+                target_d: d,
+                view_seconds: session.puzzle.difficulty.view_seconds(),
+            }))
+        })
+    }
 }
 
 #[tool_handler]
 impl ServerHandler for Snap24 {
     fn get_info(&self) -> ServerConfig {
-        ServerConfig::new(ServerCapabilities::builder().enable_tools().build()).with_instructions(
+        ServerConfig::new(
+            ServerCapabilities::builder()
+                .enable_tools()
+                .enable_resources()
+                .build(),
+        )
+        .with_instructions(
             "Snap 24: the 24 game. You deal a hand with start_puzzle, the player combines every \
              card exactly once with + - * / to reach the target, and submit_solution checks it \
              with exact arithmetic. Use hint for progressive help, reveal for the solution set \
              and explain to walk through one. Cards are ranks; A=1, J=11, Q=12, K=13. Targets \
              and sub-results can be fractions.",
         )
+    }
+
+    async fn list_resources(
+        &self,
+        _request: Option<PaginatedRequestParams>,
+        _context: RequestContext<RoleServer>,
+    ) -> Result<ListResourcesResult, ErrorData> {
+        Ok(ListResourcesResult::with_all_items(vec![Resource::new(
+            UI_URI,
+            "snap24-board",
+        )
+        .with_title("Snap 24 board")
+        .with_description("Interactive Snap 24 game board")
+        .with_mime_type(UI_MIME)]))
+    }
+
+    async fn read_resource(
+        &self,
+        request: ReadResourceRequestParams,
+        _context: RequestContext<RoleServer>,
+    ) -> Result<ReadResourceResponse, ErrorData> {
+        if request.uri != UI_URI {
+            return Err(ErrorData::resource_not_found(
+                format!("no such resource: {}", request.uri),
+                None,
+            ));
+        }
+        Ok(ReadResourceResult::new(vec![ResourceContents::TextResourceContents {
+            uri: UI_URI.to_string(),
+            mime_type: Some(UI_MIME.to_string()),
+            text: BOARD_HTML.to_string(),
+            meta: Some(ui_meta()),
+        }])
+        .into())
     }
 }
 
