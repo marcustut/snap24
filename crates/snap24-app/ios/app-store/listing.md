@@ -6,8 +6,9 @@ Fill the `<...>` placeholders before submitting. Character limits noted.
 
 | Field | Value |
 |---|---|
-| Name (30) | `Snap 24` |
-| Subtitle (30) | `Card maths against the clock` |
+| Name (30) | `Snap 24 - Card Maths` |
+| Subtitle (30) | `Make 24 from five cards` |
+| Home screen label | `Snap 24` (`CFBundleDisplayName`; must stay short) |
 | Bundle ID | `me.marcustut.snap24` |
 | Primary category | Games › Puzzle |
 | Secondary category | Games › Card |
@@ -48,7 +49,7 @@ No accounts. No ads. No network. Just cards, numbers and a clock.
 ## Keywords (100, comma-separated)
 
 ```
-24 game,math,card,puzzle,arithmetic,mental math,numbers,brain,memory,solitaire,poker,quiz
+make 24,math,card,puzzle,arithmetic,mental math,numbers,brain,memory,solitaire,poker,quiz
 ```
 
 ## URLs
@@ -80,6 +81,13 @@ No accounts. No ads. No network. Just cards, numbers and a clock.
 
 ## Notes before submission
 
+- **The name.** Bare `Snap 24` is taken in App Store Connect, so the store name is
+  `Snap 24 - Card Maths` — only the 30-char Name field must be unique; the subtitle
+  and home-screen label don't, so the icon still reads `Snap 24`. Confirm the exact
+  string is free in App Store Connect when you create the app record.
+- **Don't title it "24 Game"** — Suntex International owns that trademark (they ship
+  "24 Game – Math Card Puzzle"). Avoid the phrase in the name and, ideally, the
+  keywords too; descriptive "24"/"make 24" is fine.
 - **Signing is required and not done here** — see `ios/README.md` ("App Store
   packaging"). You need an Apple Developer team, a distribution certificate and a
   provisioning profile.
