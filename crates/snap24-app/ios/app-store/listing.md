@@ -55,9 +55,9 @@ No accounts. No ads. No network. Just cards, numbers and a clock.
 
 | Field | Value |
 |---|---|
-| Support URL | `<https://your-site/snap24/support>` |
-| Marketing URL | `<https://your-site/snap24>` |
-| Privacy policy URL | `<https://your-site/snap24/privacy>` |
+| Support URL | https://snap24.marcustut.me/support |
+| Marketing URL | https://snap24.marcustut.me |
+| Privacy policy URL | https://snap24.marcustut.me/privacy |
 
 ## App Privacy
 
