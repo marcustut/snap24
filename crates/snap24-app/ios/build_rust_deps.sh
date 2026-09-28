@@ -21,7 +21,7 @@ export PATH="$PATH:/opt/homebrew/bin"
 
 # Keep cargo artifacts in the workspace target dir so repeat builds are fast and
 # the same cache is shared with desktop builds.
-export CARGO_TARGET_DIR="$SRCROOT/../../target"
+export CARGO_TARGET_DIR="$SRCROOT/../../../target"
 
 # Xcode puts its toolchain first on PATH, which breaks `ld: library 'System' not
 # found` for Rust link steps (<https://github.com/rust-lang/rust/issues/80817>).
