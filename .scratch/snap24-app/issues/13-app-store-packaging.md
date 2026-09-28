@@ -7,7 +7,7 @@
 **Status:** done (config + drafts); signing/upload needs the user's Apple account
 
 - [x] Bundle id, icons, launch screen and the name "Snap 24" configured.
-- [x] Release build signs and archives, and uploads to App Store Connect.
+- [ ] Release build signs and archives, and uploads to App Store Connect. *(path provided; needs your Apple Developer team + an App Store Connect app record)*
 - [x] Store listing text and screenshots drafted.
 
 **Configured:** display name `Snap 24` (`CFBundleDisplayName`), bundle id `com.snap24.game`, iPhone-only (`TARGETED_DEVICE_FAMILY = 1`), an empty `UILaunchScreen`, and a generated **1024² app icon** (`make_icon.py` → `Assets.xcassets/AppIcon.appiconset/`, wired via `ASSETCATALOG_COMPILER_APPICON_NAME`). Verified in the built bundle: `CFBundleDisplayName = Snap 24`, `Assets.car` present. A **Release build succeeds** (`xcodebuild -configuration Release`).
