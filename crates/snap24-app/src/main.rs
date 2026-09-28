@@ -87,10 +87,11 @@ impl TargetEntry {
         self.digits.parse().ok()
     }
 
-    fn label(&self) -> String {
+    /// Value shown next to the static "TARGET" label.
+    fn display(&self) -> String {
         match self.value() {
-            Some(value) => format!("Target: {value}"),
-            None => "Target: Random".to_string(),
+            Some(value) => value.to_string(),
+            None => "Random".to_string(),
         }
     }
 }
@@ -308,6 +309,9 @@ struct DifficultyThumb;
 struct DifficultyLabel;
 
 #[derive(Component)]
+struct DifficultyMeta;
+
+#[derive(Component)]
 struct DifficultyNextButton;
 
 #[derive(Component)]
@@ -507,7 +511,14 @@ fn cleanup_screen(mut commands: Commands, roots: Query<Entity, With<ScreenRoot>>
     }
 }
 
-fn root(commands: &mut Commands) -> Entity {
+/// Shared chrome for the menu screens: the vignette background, the two-tone
+/// wordmark top-left, a tracked context label top-right, and centred content.
+fn menu_screen(
+    commands: &mut Commands,
+    display: &Handle<Font>,
+    context: &str,
+    build: impl FnOnce(&mut ChildSpawnerCommands),
+) {
     commands
         .spawn((
             ScreenRoot,
@@ -515,74 +526,124 @@ fn root(commands: &mut Commands) -> Entity {
                 width: percent(100),
                 height: percent(100),
                 flex_direction: FlexDirection::Column,
-                justify_content: JustifyContent::Center,
                 align_items: AlignItems::Center,
-                row_gap: px(22),
-                padding: UiRect::all(px(24)),
+                padding: UiRect::all(px(28)),
                 ..default()
             },
             BackgroundColor(BG),
             vignette(),
         ))
+        .with_children(|root| {
+            root.spawn(Node {
+                width: percent(100),
+                justify_content: JustifyContent::SpaceBetween,
+                align_items: AlignItems::Center,
+                padding: UiRect::axes(px(6), px(0)),
+                ..default()
+            })
+            .with_children(|bar| {
+                bar.spawn(Node {
+                    flex_direction: FlexDirection::Row,
+                    column_gap: px(6),
+                    ..default()
+                })
+                .with_children(|mark| {
+                    text_static(mark, "SNAP", 26.0, TEXT, display);
+                    text_static(mark, "24", 26.0, GOLD, display);
+                });
+                text_body(bar, &tracked(context), 13.0, MUTED);
+            });
+
+            root.spawn(Node {
+                width: percent(100),
+                flex_grow: 1.0,
+                flex_direction: FlexDirection::Column,
+                justify_content: JustifyContent::Center,
+                align_items: AlignItems::Center,
+                row_gap: px(22),
+                ..default()
+            })
+            .with_children(build);
+        });
+}
+
+/// The brass primary action (Play / Next / Start).
+fn primary_button(parent: &mut ChildSpawnerCommands, label: &str, marker: impl Bundle) -> Entity {
+    parent
+        .spawn((
+            Button,
+            marker,
+            Hoverable { base: GOLD },
+            Node {
+                padding: UiRect::axes(px(36), px(16)),
+                border_radius: BorderRadius::MAX,
+                min_width: px(220),
+                justify_content: JustifyContent::Center,
+                ..default()
+            },
+            BackgroundColor(GOLD),
+            BorderColor::all(GOLD),
+        ))
+        .with_children(|button| {
+            text_body(button, label, 20.0, CARD_INK);
+        })
         .id()
 }
 
-fn button<M: Bundle>(parent: &mut ChildSpawnerCommands, label: &str, marker: M) {
-    button_width(parent, label, marker, 180.0);
+/// A selectable mode option: display title + body description in a hairline card.
+fn mode_card(
+    parent: &mut ChildSpawnerCommands,
+    mode: Mode,
+    title: &str,
+    description: &str,
+    display: &Handle<Font>,
+) {
+    parent
+        .spawn((
+            Button,
+            ModeButton(mode),
+            Hoverable { base: PANEL },
+            Node {
+                width: px(440),
+                flex_direction: FlexDirection::Column,
+                align_items: AlignItems::FlexStart,
+                row_gap: px(8),
+                padding: UiRect::all(px(24)),
+                border: UiRect::all(px(1)),
+                border_radius: BorderRadius::all(px(18)),
+                ..default()
+            },
+            BackgroundColor(PANEL),
+            BorderColor::all(BORDER),
+        ))
+        .with_children(|card| {
+            text_static(card, title, 30.0, TEXT, display);
+            text_body(card, description, 16.0, MUTED);
+        });
 }
 
-fn button_width<M: Bundle>(
-    parent: &mut ChildSpawnerCommands,
-    label: &str,
-    marker: M,
-    min_width: f32,
-) -> Entity {
+/// A square hairline key (target keypad digits).
+fn key_button(parent: &mut ChildSpawnerCommands, label: &str, marker: impl Bundle) {
     parent
         .spawn((
             Button,
             marker,
             Hoverable { base: KEY },
             Node {
-                padding: UiRect::axes(px(24), px(16)),
-                border: UiRect::ZERO,
-                border_radius: BorderRadius::MAX,
-                min_width: px(min_width),
+                width: px(78),
+                height: px(64),
                 justify_content: JustifyContent::Center,
-                ..default()
-            },
-            BackgroundColor(KEY),
-            BorderColor::all(KEY),
-        ))
-        .with_children(|button| {
-            button.spawn((
-                Text::new(label),
-                TextFont {
-                    font_size: FontSize::Px(24.0),
-                    ..default()
-                },
-                TextColor(TEXT),
-            ));
-        })
-        .id()
-}
-
-/// A framed panel that menu content sits inside.
-fn panel(parent: &mut ChildSpawnerCommands, build: impl FnOnce(&mut ChildSpawnerCommands)) {
-    parent
-        .spawn((
-            Node {
-                flex_direction: FlexDirection::Column,
                 align_items: AlignItems::Center,
-                row_gap: px(16),
-                padding: UiRect::all(px(40)),
                 border: UiRect::all(px(1)),
-                border_radius: BorderRadius::all(px(28)),
+                border_radius: BorderRadius::all(px(14)),
                 ..default()
             },
-            BackgroundColor(PANEL),
+            BackgroundColor(BG),
             BorderColor::all(BORDER),
         ))
-        .with_children(build);
+        .with_children(|button| {
+            text_body(button, label, 24.0, TEXT);
+        });
 }
 
 fn heading(parent: &mut ChildSpawnerCommands, text: &str, size: f32, font: &Handle<Font>) {
@@ -707,168 +768,200 @@ fn text_with(
 }
 
 fn spawn_title(mut commands: Commands, fonts: Res<Fonts>) {
-    let root = root(&mut commands);
     let display = fonts.display.clone();
-    commands.entity(root).with_children(|ui| {
-        panel(ui, |p| {
-            heading(p, "SNAP 24", 72.0, &display);
-            heading(p, "Make the target from every card.", 24.0, &display);
-            button(p, "Play", PlayButton);
+    menu_screen(&mut commands, &display, "A card puzzle", |ui| {
+        ui.spawn(Node {
+            flex_direction: FlexDirection::Row,
+            column_gap: px(14),
+            ..default()
+        })
+        .with_children(|hero| {
+            text_static(hero, "SNAP", 96.0, TEXT, &display);
+            text_static(hero, "24", 96.0, GOLD, &display);
         });
+        text_body(ui, "Make the target from every card.", 20.0, MUTED);
+        primary_button(ui, "Play", PlayButton);
     });
 }
 
 fn spawn_mode_select(mut commands: Commands, fonts: Res<Fonts>) {
-    let root = root(&mut commands);
     let display = fonts.display.clone();
-    commands.entity(root).with_children(|ui| {
-        panel(ui, |p| {
-            heading(p, "Choose mode", 40.0, &display);
-            heading(p, "Classic: five cards, target 24.", 22.0, &display);
-            heading(p, "Custom: tiers change the card count and target.", 22.0, &display);
-            button(p, "Classic", ModeButton(Mode::Classic));
-            button(p, "Custom", ModeButton(Mode::Custom));
-            button(p, "Back", BackButton);
-        });
+    menu_screen(&mut commands, &display, "Mode", |ui| {
+        heading(ui, "Choose mode", 40.0, &display);
+        mode_card(
+            ui,
+            Mode::Classic,
+            "Classic",
+            "Five cards. Make 24.",
+            &display,
+        );
+        mode_card(
+            ui,
+            Mode::Custom,
+            "Custom",
+            "Tiers change the card count and the target.",
+            &display,
+        );
+        ghost_button(ui, "Back", BackButton);
     });
 }
 
 fn spawn_difficulty_select(mut commands: Commands, game: Res<Game>, fonts: Res<Fonts>) {
-    let root = root(&mut commands);
     let display = fonts.display.clone();
     let start = Difficulty::ALL
         .iter()
         .position(|tier| *tier == game.difficulty)
         .unwrap_or(0) as f32;
-    let label = game.difficulty.label();
-    commands.entity(root).with_children(|ui| {
-        panel(ui, |p| {
-            heading(p, "Choose difficulty", 40.0, &display);
-            p.spawn((
+    menu_screen(&mut commands, &display, "Difficulty", |ui| {
+        heading(ui, "Choose difficulty", 40.0, &display);
+
+        // The tier reads big; its real parameters sit under it as tracked caps.
+        ui.spawn(Node {
+            flex_direction: FlexDirection::Column,
+            align_items: AlignItems::Center,
+            row_gap: px(6),
+            ..default()
+        })
+        .with_children(|tier| {
+            tier.spawn((
                 DifficultyLabel,
-                Text::new(label),
+                Text::new(game.difficulty.label()),
                 TextFont {
-                    font_size: FontSize::Px(28.0),
+                    font: display.clone().into(),
+                    font_size: FontSize::Px(46.0),
                     ..default()
                 },
-                TextColor(GOLD),
+                TextColor(TEXT),
             ));
-            p.spawn(Node {
-                width: percent(100),
-                height: px(36),
-                align_items: AlignItems::Center,
-                justify_content: JustifyContent::Center,
-                ..default()
-            })
-            .with_children(|row| {
-                row.spawn((
-                    DifficultySlider,
-                    Hovered::default(),
-                    Node {
-                        width: px(420),
-                        height: px(24),
-                        flex_direction: FlexDirection::Column,
-                        justify_content: JustifyContent::Center,
-                        align_items: AlignItems::Stretch,
-                        ..default()
-                    },
-                    Slider {
-                        track_click: TrackClick::Snap,
-                        orientation: SliderOrientation::Horizontal,
-                    },
-                    SliderValue(start),
-                    SliderRange::new(0.0, (Difficulty::ALL.len() - 1) as f32),
-                    SliderStep(1.0),
-                    TabIndex(0),
-                    observe(slider_self_update),
-                    Children::spawn((
-                        Spawn((
-                            Node {
-                                height: px(8),
-                                border_radius: BorderRadius::all(px(4)),
-                                ..default()
-                            },
-                            BackgroundColor(KEY),
-                        )),
-                        Spawn((
-                            Node {
-                                position_type: PositionType::Absolute,
-                                left: px(0),
-                                right: px(18),
-                                top: px(0),
-                                bottom: px(0),
-                                ..default()
-                            },
-                            children![(
-                                DifficultyThumb,
-                                SliderThumb,
-                                Node {
-                                    width: px(22),
-                                    height: px(22),
-                                    position_type: PositionType::Absolute,
-                                    left: percent(0),
-                                    border_radius: BorderRadius::MAX,
-                                    ..default()
-                                },
-                                BackgroundColor(GOLD),
-                            )],
-                        )),
-                    )),
-                ));
-            });
-            button(p, "Next", DifficultyNextButton);
-            button(p, "Back", BackButton);
+            tier.spawn((
+                DifficultyMeta,
+                Text::new(tracked(&tier_meta(game.difficulty))),
+                TextFont {
+                    font_size: FontSize::Px(13.0),
+                    ..default()
+                },
+                TextColor(MUTED),
+            ));
         });
+
+        ui.spawn(Node {
+            width: px(460),
+            height: px(36),
+            align_items: AlignItems::Center,
+            justify_content: JustifyContent::Center,
+            ..default()
+        })
+        .with_children(|row| {
+            row.spawn((
+                DifficultySlider,
+                Hovered::default(),
+                Node {
+                    width: px(440),
+                    height: px(24),
+                    flex_direction: FlexDirection::Column,
+                    justify_content: JustifyContent::Center,
+                    align_items: AlignItems::Stretch,
+                    ..default()
+                },
+                Slider {
+                    track_click: TrackClick::Snap,
+                    orientation: SliderOrientation::Horizontal,
+                },
+                SliderValue(start),
+                SliderRange::new(0.0, (Difficulty::ALL.len() - 1) as f32),
+                SliderStep(1.0),
+                TabIndex(0),
+                observe(slider_self_update),
+                Children::spawn((
+                    Spawn((
+                        Node {
+                            height: px(8),
+                            border_radius: BorderRadius::all(px(4)),
+                            ..default()
+                        },
+                        BackgroundColor(KEY),
+                    )),
+                    Spawn((
+                        Node {
+                            position_type: PositionType::Absolute,
+                            left: px(0),
+                            right: px(18),
+                            top: px(0),
+                            bottom: px(0),
+                            ..default()
+                        },
+                        children![(
+                            DifficultyThumb,
+                            SliderThumb,
+                            Node {
+                                width: px(22),
+                                height: px(22),
+                                position_type: PositionType::Absolute,
+                                left: percent(0),
+                                border_radius: BorderRadius::MAX,
+                                ..default()
+                            },
+                            BackgroundColor(GOLD),
+                        )],
+                    )),
+                )),
+            ));
+        });
+
+        primary_button(ui, "Next", DifficultyNextButton);
+        ghost_button(ui, "Back", BackButton);
     });
 }
 
 fn spawn_target_select(mut commands: Commands, fonts: Res<Fonts>) {
-    let root = root(&mut commands);
     let display = fonts.display.clone();
-    commands.entity(root).with_children(|ui| {
-        panel(ui, |p| {
-            heading(p, "Custom target", 40.0, &display);
-            p.spawn((
+    menu_screen(&mut commands, &display, "Target", |ui| {
+        heading(ui, "Custom target", 40.0, &display);
+
+        ui.spawn(Node {
+            flex_direction: FlexDirection::Row,
+            align_items: AlignItems::Baseline,
+            column_gap: px(16),
+            ..default()
+        })
+        .with_children(|row| {
+            text_body(row, "TARGET", 15.0, MUTED);
+            row.spawn((
                 TargetLabel,
                 Text::new(""),
                 TextFont {
-                    font_size: FontSize::Px(30.0),
+                    font: display.clone().into(),
+                    font_size: FontSize::Px(56.0),
                     ..default()
                 },
-                TextColor(GOLD),
+                TextColor(TEXT),
             ));
-            heading(p, "Type a number, or Random", 20.0, &display);
-            for row in [[7, 8, 9], [4, 5, 6], [1, 2, 3]] {
-                p.spawn(Node {
-                    flex_direction: FlexDirection::Row,
-                    column_gap: px(12),
-                    ..default()
-                })
-                .with_children(|row_ui| {
-                    for digit in row {
-                        button_width(row_ui, &digit.to_string(), DigitButton(digit), 72.0);
-                    }
-                });
-            }
-            p.spawn(Node {
-                flex_direction: FlexDirection::Row,
-                column_gap: px(12),
-                ..default()
-            })
-            .with_children(|row_ui| {
-                button_width(row_ui, "0", DigitButton(0), 72.0);
-                button(row_ui, "Random", RandomTargetButton);
-            });
-            p.spawn(Node {
-                flex_direction: FlexDirection::Row,
-                column_gap: px(12),
-                ..default()
-            })
-            .with_children(|row_ui| {
-                button(row_ui, "Start", StartButton);
-                button(row_ui, "Back", BackButton);
-            });
         });
+
+        for row in [[7, 8, 9], [4, 5, 6], [1, 2, 3]] {
+            ui.spawn(Node {
+                flex_direction: FlexDirection::Row,
+                column_gap: px(12),
+                ..default()
+            })
+            .with_children(|digits| {
+                for digit in row {
+                    key_button(digits, &digit.to_string(), DigitButton(digit));
+                }
+            });
+        }
+        ui.spawn(Node {
+            flex_direction: FlexDirection::Row,
+            column_gap: px(12),
+            ..default()
+        })
+        .with_children(|row_ui| {
+            key_button(row_ui, "0", DigitButton(0));
+            ghost_button(row_ui, "Random", RandomTargetButton);
+        });
+
+        primary_button(ui, "Start", StartButton);
+        ghost_button(ui, "Back", BackButton);
     });
 }
 
@@ -1212,17 +1305,29 @@ fn mode_buttons(
     }
 }
 
+/// Real tier parameters, so the difficulty screen says something concrete.
+fn tier_meta(difficulty: Difficulty) -> String {
+    match difficulty.view_seconds() {
+        None => format!("{} cards · unlimited view", difficulty.card_count()),
+        Some(0) => format!("{} cards · never shown", difficulty.card_count()),
+        Some(seconds) => format!("{} cards · {seconds}s view", difficulty.card_count()),
+    }
+}
+
 fn difficulty_slider_changed(
     sliders: Query<&SliderValue, (Changed<SliderValue>, With<DifficultySlider>)>,
     mut game: ResMut<Game>,
-    mut labels: Query<&mut Text, With<DifficultyLabel>>,
+    mut labels: Query<&mut Text, (With<DifficultyLabel>, Without<DifficultyMeta>)>,
+    mut metas: Query<&mut Text, (With<DifficultyMeta>, Without<DifficultyLabel>)>,
 ) {
     for value in &sliders {
         let index = value.0.round().clamp(0.0, (Difficulty::ALL.len() - 1) as f32) as usize;
         game.difficulty = Difficulty::ALL[index];
-        let name = game.difficulty.label();
         for mut label in &mut labels {
-            **label = name.to_string();
+            **label = game.difficulty.label().to_string();
+        }
+        for mut meta in &mut metas {
+            **meta = tracked(&tier_meta(game.difficulty));
         }
     }
 }
@@ -1294,7 +1399,7 @@ fn start_button(
 
 fn update_target_display(entry: Res<TargetEntry>, mut labels: Query<&mut Text, With<TargetLabel>>) {
     for mut label in &mut labels {
-        **label = entry.label();
+        **label = entry.display();
     }
 }
 

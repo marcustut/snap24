@@ -25,4 +25,10 @@
 - **Fractions render stacked (vertical)**, not `a/b`: merged fractional values show numerator / rule / denominator (e.g. 5 over 6) inside the token. Integers stay a single numeral.
 - Board header split: wordmark left, `Mode · Tier` chip right, `Target` label + large numeral centred.
 
+**Menu-flow redesign (after the board):** a critique of Title → Mode → Difficulty → Target found the menus reading like a *different app* — a centred rounded "modal card" with low-contrast pill buttons and body copy set in heavy Fraunces. Reworked to match the board:
+- Removed the panel; all screens now share the board's chrome (`menu_screen`): vignette background, two-tone `SNAP 24` wordmark top-left, tracked context label top-right, open centred content.
+- Type roles fixed: Fraunces only for titles / the tier name / the target value; descriptions and labels are Space Grotesk, muted.
+- Controls unified with the board: **brass primary** (`Play`, `Next`, `Start`) + **ghost underlined** secondary (`Back`, `Random`).
+- Mode is now two selectable **choice cards** (title + real description) instead of stacked pills; the difficulty screen shows the tier big with its **real parameters** ("5 CARDS · UNLIMITED VIEW" from `card_count`/`view_seconds`); the target screen uses a hairline keypad with a tracked `TARGET` + large value.
+
 **Caveat:** the devtools screenshot capture is unreliable immediately after a state transition (black frames), so the animations aren't proven pixel-by-pixel — they should be eyeballed in the running app. Audio (with mute) is the remaining piece.
