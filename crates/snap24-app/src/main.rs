@@ -477,6 +477,12 @@ fn main() {
     #[cfg(target_os = "ios")]
     app.add_systems(Update, fit_ui);
 
+    // `WinitSettings::mobile()` is event-driven, so `Time` doesn't advance
+    // without input — which freezes the countdown and the animations. Use the
+    // game preset instead: continuous while focused, low-power when backgrounded.
+    #[cfg(any(target_os = "ios", target_os = "android"))]
+    app.insert_resource(bevy::winit::WinitSettings::game());
+
     #[cfg(feature = "devtools")]
     app.add_plugins(devtools::DevtoolsPlugin);
 

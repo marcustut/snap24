@@ -83,6 +83,36 @@ writes to the workspace `target/` directory.
 - **Audio** — the embedded WAVs play through CoreAudio; the `Sound/Muted`
   control works as on desktop.
 
+## App Store packaging (ticket 13)
+
+Configured in the project:
+
+| Item | Where |
+|---|---|
+| Name "Snap 24" | `ios-src/Info.plist` → `CFBundleDisplayName` |
+| Bundle id | project → `PRODUCT_BUNDLE_IDENTIFIER = com.snap24.game` |
+| App icon | `Assets.xcassets/AppIcon.appiconset/AppIcon-1024.png` (regenerate with `python3 make_icon.py`) + `ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon` |
+| Launch screen | `Info.plist` → empty `UILaunchScreen` dict (solid background) |
+| Device family | iPhone (`TARGETED_DEVICE_FAMILY = 1`) |
+
+**What still needs you (I can't do it):** signing and upload, which need your Apple
+Developer account. Create the app record in App Store Connect for
+`com.snap24.game`, then:
+
+```sh
+DEVELOPMENT_TEAM=<your-team-id> crates/snap24-app/ios/archive.sh
+# then upload the .ipa via Xcode Organizer, Transporter.app, or:
+xcrun altool --upload-app -f <ipa> -t ios -u <apple-id> -p <app-specific-password>
+```
+
+`archive.sh` runs `xcodebuild archive` (Release, generic iOS device) and
+`-exportArchive` with `ExportOptions.plist` (`method = app-store-connect`),
+substituting your team id. No credentials are stored in the repo.
+
+**Listing + screenshots** are drafted in `app-store/`: `listing.md` (name,
+subtitle, description, keywords, privacy answers) and
+`app-store/screenshots/*.png` at 6.9" (1320×2868).
+
 ## Known limitations / risks
 
 - **Layout is desktop-shaped.** The title screen's hero overflows the phone
