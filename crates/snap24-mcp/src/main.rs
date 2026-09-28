@@ -64,17 +64,33 @@ const UI_URI: &str = "ui://snap24/board.html";
 const UI_MIME: &str = "text/html;profile=mcp-app";
 const BOARD_HTML: &str = include_str!("../ui/board.html");
 
-/// `_meta` that links a tool to the widget (`_meta.ui.resourceUri`).
-fn ui_meta() -> MetaObject {
-    // The widget makes no network calls and loads no external assets (it talks
-    // to the host over postMessage only), so the CSP allowlists are empty.
-    let value = serde_json::json!({
+/// `_meta` linking a tool to the widget (`_meta.ui.resourceUri`).
+fn tool_meta() -> MetaObject {
+    meta(serde_json::json!({
+        "ui": { "resourceUri": UI_URI },
+        "openai/toolInvocation/invoking": "Dealing…",
+        "openai/toolInvocation/invoked": "Board ready"
+    }))
+}
+
+/// `_meta` on the resource contents: CSP, display modes and a model-facing
+/// description of what the widget shows.
+fn resource_meta() -> MetaObject {
+    meta(serde_json::json!({
+        // The widget makes no network calls and loads no external assets (it
+        // talks to the host over postMessage only), so both allowlists are empty.
         "ui": {
-            "resourceUri": UI_URI,
             "prefersBorder": true,
             "csp": { "connectDomains": [], "resourceDomains": [] }
-        }
-    });
+        },
+        // Inline by default; the player can pop the board into picture-in-picture
+        // so it stays visible while the conversation continues.
+        "openai/ui": { "availableDisplayModes": ["inline", "pip"] },
+        "openai/widgetDescription": "Interactive Snap 24 board: tap two cards and an operator to merge them toward the target."
+    }))
+}
+
+fn meta(value: serde_json::Value) -> MetaObject {
     MetaObject(value.as_object().expect("object").clone())
 }
 
@@ -229,7 +245,10 @@ impl Snap24 {
 
 #[tool_router]
 impl Snap24 {
-    #[tool(description = "Deal a Snap 24 puzzle. Returns a puzzle_id plus the dealt cards and target.")]
+    #[tool(
+        description = "Deal a Snap 24 puzzle. Returns a puzzle_id plus the dealt cards and target.",
+        annotations(title = "Deal a puzzle", read_only_hint = false, destructive_hint = false, open_world_hint = false)
+    )]
     fn start_puzzle(&self, Parameters(p): Parameters<StartParams>) -> Result<String, String> {
         let mode = parse_mode(p.mode.as_deref());
         let difficulty = parse_difficulty(p.difficulty.as_deref())?;
@@ -275,7 +294,10 @@ impl Snap24 {
         Ok(summary)
     }
 
-    #[tool(description = "Validate a player's expression against the dealt cards and target (exact arithmetic, server-side).")]
+    #[tool(
+        description = "Validate a player's expression against the dealt cards and target (exact arithmetic, server-side).",
+        annotations(title = "Check a solution", read_only_hint = true, destructive_hint = false, open_world_hint = false)
+    )]
     fn submit_solution(&self, Parameters(p): Parameters<SubmitParams>) -> Result<String, String> {
         let id = p.puzzle_id.clone();
         self.with_session(&id, |session| {
@@ -295,7 +317,10 @@ impl Snap24 {
         })
     }
 
-    #[tool(description = "Progressive hint: 1 = which two cards, 2 = the operator, 3 = the sub-result, 4 = the full solution. Advances one level per call unless a level is given.")]
+    #[tool(
+        description = "Progressive hint: 1 = which two cards, 2 = the operator, 3 = the sub-result, 4 = the full solution. Advances one level per call unless a level is given.",
+        annotations(title = "Give a hint", read_only_hint = true, destructive_hint = false, open_world_hint = false)
+    )]
     fn hint(&self, Parameters(p): Parameters<HintParams>) -> Result<String, String> {
         let id = p.puzzle_id.clone();
         self.with_session(&id, |session| {
@@ -326,7 +351,10 @@ impl Snap24 {
         })
     }
 
-    #[tool(description = "List distinct solutions for the current puzzle (canonical, de-duplicated).")]
+    #[tool(
+        description = "List distinct solutions for the current puzzle (canonical, de-duplicated).",
+        annotations(title = "Reveal solutions", read_only_hint = true, destructive_hint = false, open_world_hint = false)
+    )]
     fn reveal(&self, Parameters(p): Parameters<IdParams>) -> Result<String, String> {
         let id = p.puzzle_id.clone();
         self.with_session(&id, |session| {
@@ -352,7 +380,10 @@ impl Snap24 {
         })
     }
 
-    #[tool(description = "Explain a solution step by step in words (uses the player's expression if given, otherwise one solution).")]
+    #[tool(
+        description = "Explain a solution step by step in words (uses the player's expression if given, otherwise one solution).",
+        annotations(title = "Explain a solution", read_only_hint = true, destructive_hint = false, open_world_hint = false)
+    )]
     fn explain(&self, Parameters(p): Parameters<ExplainParams>) -> Result<String, String> {
         let id = p.puzzle_id.clone();
         self.with_session(&id, |session| {
@@ -394,7 +425,8 @@ impl Snap24 {
 
     #[tool(
         description = "Render the Snap 24 board widget. Deal with start_puzzle first, then pass its puzzle_id here to show the interactive board.",
-        meta = ui_meta()
+        meta = tool_meta(),
+        annotations(title = "Show the board", read_only_hint = true, destructive_hint = false, open_world_hint = false)
     )]
     fn render_board(&self, Parameters(p): Parameters<IdParams>) -> Result<Json<BoardView>, String> {
         let id = p.puzzle_id.clone();
@@ -460,7 +492,7 @@ impl ServerHandler for Snap24 {
             uri: UI_URI.to_string(),
             mime_type: Some(UI_MIME.to_string()),
             text: BOARD_HTML.to_string(),
-            meta: Some(ui_meta()),
+            meta: Some(resource_meta()),
         }])
         .into())
     }

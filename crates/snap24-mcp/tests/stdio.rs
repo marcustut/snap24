@@ -94,7 +94,7 @@ fn tools_work_over_stdio() {
     let mut server = Server::start();
     server.initialize();
 
-    // 1. The five tools are advertised.
+    // 1. The six tools are advertised.
     let tools = server.request("tools/list", json!({}));
     let mut names: Vec<String> = tools["tools"]
         .as_array()
@@ -123,6 +123,7 @@ fn tools_work_over_stdio() {
         .find(|t| t["name"] == "render_board")
         .expect("render_board tool");
     assert_eq!(render["_meta"]["ui"]["resourceUri"], "ui://snap24/board.html");
+    assert_eq!(render["annotations"]["readOnlyHint"], true, "{render}");
 
     // 1c. The widget resource is listed with the MCP Apps MIME type and reads back.
     let resources = server.request("resources/list", json!({}));
@@ -140,9 +141,18 @@ fn tools_work_over_stdio() {
     let html = read["contents"][0]["text"].as_str().unwrap_or_default();
     assert!(html.contains("ui/notifications/tool-result"), "bridge missing");
     assert!(html.contains("tools/call"), "bridge missing");
+    let contents_meta = &read["contents"][0]["_meta"];
     assert!(
-        read["contents"][0]["_meta"]["ui"]["csp"]["connectDomains"].is_array(),
+        contents_meta["ui"]["csp"]["connectDomains"].is_array(),
         "CSP must be declared on the resource contents: {read}"
+    );
+    let modes = contents_meta["openai/ui"]["availableDisplayModes"]
+        .as_array()
+        .expect("available display modes");
+    assert!(modes.iter().any(|m| m == "pip"), "PiP must be declared: {modes:?}");
+    assert!(
+        contents_meta["openai/widgetDescription"].is_string(),
+        "widget description: {contents_meta}"
     );
 
     // 2. Deal a deterministic Classic puzzle.
@@ -154,6 +164,15 @@ fn tools_work_over_stdio() {
         .expect("puzzle id")
         .trim()
         .to_string();
+
+    // 2a. start_puzzle mutates state, so it must not claim read-only.
+    let start = tools["tools"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|t| t["name"] == "start_puzzle")
+        .unwrap();
+    assert_eq!(start["annotations"]["readOnlyHint"], false, "{start}");
 
     // 2b. render_board returns structured content for the widget.
     let view = server.call_result("render_board", json!({"puzzle_id": puzzle_id}));

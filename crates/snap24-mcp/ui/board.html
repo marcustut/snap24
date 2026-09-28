@@ -51,6 +51,9 @@
     font-size: 13px; padding: 2px 4px; cursor: pointer;
   }
   .ghost:disabled { color: #6b6257; border-color: transparent; cursor: default; }
+  body[data-mode="pip"] { padding: 10px 10px 14px; gap: 10px; }
+  body[data-mode="pip"] .card { width: 62px; height: 86px; }
+  body[data-mode="pip"] .target strong { font-size: 40px; }
   .primary { background: #c9a24a; color: #1a140f; border: 0; border-radius: 999px; padding: 10px 22px; font-size: 15px; cursor: pointer; }
 </style>
 </head>
@@ -70,6 +73,8 @@
     <button class="ghost" id="reveal">Reveal</button>
     <button class="ghost" id="undo">Undo</button>
     <button class="ghost" id="giveup">Give up</button>
+    <button class="ghost" id="pip">Pop out</button>
+    <button class="ghost" id="close" hidden>Close</button>
   </div>
   <button class="primary" id="next" hidden>Next puzzle</button>
 
@@ -115,6 +120,20 @@
       return "";
     });
 
+  // ---- optional ChatGPT extensions (feature-detect; MCP Apps bridge is the
+  // portable path, so the game works with or without these).
+  const host = () => (typeof window !== "undefined" ? window.openai : undefined);
+
+  function applyDisplayMode(mode) {
+    document.body.dataset.mode = typeof mode === "string" ? mode : "inline";
+    $("close").hidden = document.body.dataset.mode === "inline";
+  }
+
+  window.addEventListener("openai:set_globals", (event) => {
+    const mode = event && event.detail && event.detail.globals && event.detail.globals.displayMode;
+    if (mode) applyDisplayMode(mode);
+  }, { passive: true });
+
   // ---- exact rationals (no floats in the maths) ----------------------------
   const gcd = (a, b) => { a = Math.abs(a); b = Math.abs(b); while (b) { const t = a % b; a = b; b = t; } return a || 1; };
   const rat = (n, d = 1) => { if (d < 0) { n = -n; d = -d; } const g = gcd(n, d); return { n: n / g, d: d / g }; };
@@ -138,7 +157,12 @@
     S.mode = view.mode;
     S.difficulty = view.difficulty;
     S.target = rat(Number(view.target_n) || 0, Number(view.target_d) || 1);
-    S.cards = (view.cards || []).map((v) => ({ v: rat(Number(v) || 0), revealed: Number(view.view_seconds) !== 0, token: false }));
+    // Leaves keep the dealt rank as their expression, so the finished round can
+    // be submitted to the server for validation.
+    S.cards = (view.cards || []).map((v) => {
+      const value = rat(Number(v) || 0);
+      return { v: value, revealed: Number(view.view_seconds) !== 0, token: false, expr: String(value.n) };
+    });
     S.sel = []; S.op = null; S.phase = "playing"; S.history = [];
     S.view = view.view_seconds;
     S.left = typeof view.view_seconds === "number" ? view.view_seconds : null;
@@ -262,6 +286,17 @@
   $("next").addEventListener("click", newPuzzle);
   $("giveup").addEventListener("click", newPuzzle);
 
+  $("pip").addEventListener("click", async () => {
+    // Keep the board visible while the conversation continues.
+    if (host()?.requestDisplayMode) await host().requestDisplayMode({ mode: "pip" });
+    applyDisplayMode(host()?.displayMode ?? "pip");
+  });
+
+  $("close").addEventListener("click", () => {
+    host()?.requestClose?.();
+  });
+
+  applyDisplayMode(host()?.displayMode);
   paint();
 })();
 </script>
