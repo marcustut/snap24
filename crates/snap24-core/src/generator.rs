@@ -167,12 +167,14 @@ fn is_trivial(target: Rational, cards: &[i64]) -> bool {
 
 /// Deal a solvable puzzle for `mode` and `difficulty`, consuming `rng`.
 ///
-/// Classic retries until the drawn 5-card hand can make 24. Custom retries
+/// Both modes follow the tier card ladder (`difficulty.card_count()`); Classic
+/// always targets 24 and retries until the hand can make it, Custom retries
 /// until a non-trivial target can be drawn from the hand's reachable set.
 pub fn generate(mode: Mode, difficulty: Difficulty, rng: &mut Rng) -> Puzzle {
     match mode {
         Mode::Classic => loop {
-            let cards = rng.deal(5);
+            // Classic also follows the tier ladder; only the target is fixed.
+            let cards = rng.deal(difficulty.card_count());
             if reachable(&cards).contains(&Rational::from(24)) {
                 return Puzzle {
                     mode,
@@ -215,10 +217,7 @@ pub fn generate_targeted(
     target: Rational,
     rng: &mut Rng,
 ) -> Puzzle {
-    let count = match mode {
-        Mode::Classic => 5,
-        Mode::Custom => difficulty.card_count(),
-    };
+    let count = difficulty.card_count();
     for _ in 0..20_000 {
         let cards = rng.deal(count);
         if reachable(&cards).contains(&target) {
@@ -264,14 +263,16 @@ mod tests {
     }
 
     #[test]
-    fn classic_is_five_cards_and_solvable_24() {
-        for seed in 0..80 {
-            let mut rng = Rng::new(seed);
-            let puzzle = generate(Mode::Classic, Difficulty::Easy, &mut rng);
-            assert_eq!(puzzle.cards.len(), 5);
-            assert_eq!(puzzle.target, Rational::from(24));
-            assert!(puzzle.cards.iter().all(|c| (1..=13).contains(c)));
-            assert!(crate::is_solvable(&puzzle.cards, puzzle.target));
+    fn classic_scales_cards_with_the_tier_and_solves_24() {
+        for difficulty in Difficulty::ALL {
+            for seed in 0..40 {
+                let mut rng = Rng::new(seed * 17 + 3);
+                let puzzle = generate(Mode::Classic, difficulty, &mut rng);
+                assert_eq!(puzzle.cards.len(), difficulty.card_count());
+                assert_eq!(puzzle.target, Rational::from(24));
+                assert!(puzzle.cards.iter().all(|c| (1..=13).contains(c)));
+                assert!(crate::is_solvable(&puzzle.cards, puzzle.target));
+            }
         }
     }
 

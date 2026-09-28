@@ -836,7 +836,7 @@ fn spawn_difficulty_select(mut commands: Commands, game: Res<Game>, fonts: Res<F
             ));
             tier.spawn((
                 DifficultyMeta,
-                Text::new(tracked(&tier_meta(game.mode, game.difficulty))),
+                Text::new(tracked(&tier_meta(game.difficulty))),
                 TextFont {
                     font_size: FontSize::Px(13.0),
                     ..default()
@@ -1309,13 +1309,9 @@ fn mode_buttons(
 }
 
 /// Real tier parameters, so the difficulty screen says something concrete.
-/// Classic is always five cards (target 24) — only Custom follows the card
-/// ladder — so the advertised card count must depend on the mode.
-fn tier_meta(mode: Mode, difficulty: Difficulty) -> String {
-    let cards = match mode {
-        Mode::Classic => 5,
-        Mode::Custom => difficulty.card_count(),
-    };
+/// Both modes follow the tier card ladder.
+fn tier_meta(difficulty: Difficulty) -> String {
+    let cards = difficulty.card_count();
     match difficulty.view_seconds() {
         None => format!("{cards} cards · unlimited view"),
         Some(0) => format!("{cards} cards · never shown"),
@@ -1326,7 +1322,7 @@ fn tier_meta(mode: Mode, difficulty: Difficulty) -> String {
 /// What the tier actually changes, per mode.
 fn tier_note(mode: Mode) -> &'static str {
     match mode {
-        Mode::Classic => "Five cards, target 24. Tiers set the view time.",
+        Mode::Classic => "Tiers set the card count. Target stays 24.",
         Mode::Custom => "Tiers set the card count and the target.",
     }
 }
@@ -1344,7 +1340,7 @@ fn difficulty_slider_changed(
             **label = game.difficulty.label().to_string();
         }
         for mut meta in &mut metas {
-            **meta = tracked(&tier_meta(game.mode, game.difficulty));
+            **meta = tracked(&tier_meta(game.difficulty));
         }
     }
 }
@@ -1954,20 +1950,13 @@ mod game_tests {
     }
 
     #[test]
-    fn classic_advertises_five_cards_whatever_the_tier() {
+    fn tier_meta_reports_the_dealt_card_count() {
         for difficulty in Difficulty::ALL {
             assert!(
-                tier_meta(Mode::Classic, difficulty).starts_with("5 cards"),
-                "Classic always deals five cards: {difficulty:?}"
+                tier_meta(difficulty).starts_with(&format!("{} cards", difficulty.card_count())),
+                "advertised meta must match the dealt count: {difficulty:?}"
             );
         }
-    }
-
-    #[test]
-    fn custom_advertises_the_tier_card_count() {
-        assert!(tier_meta(Mode::Custom, Difficulty::Hard).starts_with("4 cards"));
-        assert!(tier_meta(Mode::Custom, Difficulty::Insane).starts_with("3 cards"));
-        assert!(tier_meta(Mode::Custom, Difficulty::Easy).starts_with("5 cards"));
     }
 
     #[test]
