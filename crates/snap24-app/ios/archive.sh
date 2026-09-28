@@ -33,6 +33,7 @@ xcodebuild archive \
   -destination 'generic/platform=iOS' \
   -archivePath "$ARCHIVE" \
   -derivedDataPath "$DERIVED" \
+  -allowProvisioningUpdates \
   ENABLE_USER_SCRIPT_SANDBOXING=NO \
   DEVELOPMENT_TEAM="$DEVELOPMENT_TEAM" \
   CODE_SIGN_STYLE=Automatic \
@@ -43,6 +44,7 @@ xcodebuild -exportArchive \
   -archivePath "$ARCHIVE" \
   -exportOptionsPlist "$OPTS" \
   -exportPath "$EXPORT_DIR" \
+  -allowProvisioningUpdates \
   | tail -8
 
 echo "==> done: $EXPORT_DIR"

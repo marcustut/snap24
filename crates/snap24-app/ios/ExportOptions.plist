@@ -11,6 +11,8 @@
 	<string>app-store-connect</string>
 	<key>teamID</key>
 	<string>TEAM_ID</string>
+	<key>signingStyle</key>
+	<string>automatic</string>
 	<key>uploadSymbols</key>
 	<true/>
 	<key>compileBitcode</key>

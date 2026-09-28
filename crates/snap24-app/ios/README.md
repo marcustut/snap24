@@ -111,8 +111,11 @@ xcrun altool --upload-app -f <ipa> -t ios -u <apple-id> -p <app-specific-passwor
 ```
 
 `archive.sh` runs `xcodebuild archive` (Release, generic iOS device) and
-`-exportArchive` with `ExportOptions.plist` (`method = app-store-connect`),
-substituting your team id. No credentials are stored in the repo.
+`-exportArchive` with `ExportOptions.plist` (`method = app-store-connect`,
+`signingStyle = automatic`), substituting your team id, and passes
+`-allowProvisioningUpdates` so Xcode creates/refreshes the App Store distribution
+profile for you. No credentials are stored in the repo. The signed IPA lands in
+`${DERIVED_DATA:-/tmp/s24-archive}/export/`.
 
 **Listing + screenshots** are drafted in `app-store/`: `listing.md` (name,
 subtitle, description, keywords, privacy answers) and

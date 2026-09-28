@@ -50,8 +50,13 @@ the App Store.
 
    ```sh
    DEVELOPMENT_TEAM=<your-team-id> crates/snap24-app/ios/archive.sh
-   # writes <derived>/export/*.ipa
+   # writes /tmp/s24-archive/export/Snap24.ipa
    ```
+
+   If export fails with *"No profiles were found"*, that's Xcode refusing to
+   create the distribution profile on its own — the script already passes
+   `-allowProvisioningUpdates`, so check Xcode → Settings → Accounts is signed in
+   with your paid team, then re-run.
 
    which runs `xcodebuild archive` + `-exportArchive`
    (`ExportOptions.plist`, `method = app-store-connect`; switch to
