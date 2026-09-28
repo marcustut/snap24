@@ -512,15 +512,15 @@ mod haptics {
 
         pub fn impact() {
             if let Some(mtm) = MainThreadMarker::new() {
-                let generator = unsafe { UIImpactFeedbackGenerator::new(mtm) };
-                unsafe { generator.impactOccurred() };
+                let generator = UIImpactFeedbackGenerator::new(mtm);
+                generator.impactOccurred();
             }
         }
 
         pub fn success() {
             if let Some(mtm) = MainThreadMarker::new() {
-                let generator = unsafe { UINotificationFeedbackGenerator::new(mtm) };
-                unsafe { generator.notificationOccurred(UINotificationFeedbackType::Success) };
+                let generator = UINotificationFeedbackGenerator::new(mtm);
+                generator.notificationOccurred(UINotificationFeedbackType::Success);
             }
         }
     }

@@ -95,6 +95,11 @@ Configured in the project:
 | Launch screen | `Info.plist` → empty `UILaunchScreen` dict (solid background) |
 | Device family | iPhone (`TARGETED_DEVICE_FAMILY = 1`) |
 
+There is an unsigned Release build at the repo root, `Snap24-unsigned.ipa`
+(arm64, `me.marcustut.snap24`). See **`INSTALL.md`** for both install routes:
+a free Apple ID (personal team, re-sign every 7 days) and a paid account
+(Ad Hoc / TestFlight / App Store).
+
 **What still needs you (I can't do it):** signing and upload, which need your Apple
 Developer account. Create the app record in App Store Connect for
 `me.marcustut.snap24`, then:
