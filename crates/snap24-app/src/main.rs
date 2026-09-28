@@ -399,6 +399,14 @@ fn main() {
     app.add_plugins(DefaultPlugins.set(WindowPlugin {
         primary_window: Some(Window {
             title: "Snap 24".to_string(),
+            // On iOS the default desktop window size (1280×720 points) is wider
+            // than the screen, so the UI lands off-screen; go fullscreen.
+            #[cfg(target_os = "ios")]
+            mode: bevy::window::WindowMode::BorderlessFullscreen(
+                bevy::window::MonitorSelection::Primary,
+            ),
+            #[cfg(target_os = "ios")]
+            resizable: false,
             ..default()
         }),
         ..default()
@@ -459,6 +467,11 @@ fn main() {
             .run_if(in_state(Screen::Playing)),
     );
 
+    // On iOS/Android winit should drive the loop event-driven rather than
+    // free-running; without this the app renders one frame and stalls.
+    #[cfg(any(target_os = "ios", target_os = "android"))]
+    app.insert_resource(bevy::winit::WinitSettings::mobile());
+
     #[cfg(feature = "devtools")]
     app.add_plugins(devtools::DevtoolsPlugin);
 
@@ -479,16 +492,6 @@ fn setup(mut commands: Commands) {
 struct Fonts {
     display: Handle<Font>,
     suit: Handle<Font>,
-}
-
-fn add_font(fonts: &mut Assets<Font>, path: &str) -> Handle<Font> {
-    match std::fs::read(path) {
-        Ok(bytes) => fonts.add(Font::from_bytes(bytes)),
-        Err(_) => {
-            warn!("bundled font missing: {path}");
-            Handle::default()
-        }
-    }
 }
 
 /// The four generated UI sounds, embedded in the binary.
@@ -531,18 +534,19 @@ fn play(commands: &mut Commands, handle: &Handle<AudioSource>) {
 /// Installs the three fonts at build time, before any system runs, so the very
 /// first `OnEnter` already has real handles.
 fn install_fonts(app: &mut App) {
-    const DIR: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/assets/fonts");
     let (display, suit) = {
         let mut fonts = app.world_mut().resource_mut::<Assets<Font>>();
-        let display = add_font(&mut fonts, &format!("{DIR}/Fraunces-Black.ttf"));
-        let suit = add_font(&mut fonts, &format!("{DIR}/DejaVuSans.ttf"));
+        let display = fonts.add(Font::from_bytes(
+            include_bytes!("../assets/fonts/Fraunces-Black.ttf").to_vec(),
+        ));
+        let suit = fonts.add(Font::from_bytes(
+            include_bytes!("../assets/fonts/DejaVuSans.ttf").to_vec(),
+        ));
         // Space Grotesk becomes the default body font.
-        match std::fs::read(format!("{DIR}/SpaceGrotesk-Regular.ttf")) {
-            Ok(bytes) => {
-                let _ = fonts.insert(bevy::asset::AssetId::default(), Font::from_bytes(bytes));
-            }
-            Err(_) => warn!("Space Grotesk missing; falling back to the built-in font"),
-        }
+        let _ = fonts.insert(
+            bevy::asset::AssetId::default(),
+            Font::from_bytes(include_bytes!("../assets/fonts/SpaceGrotesk-Regular.ttf").to_vec()),
+        );
         (display, suit)
     };
     app.world_mut().insert_resource(Fonts { display, suit });
