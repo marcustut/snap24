@@ -5052,6 +5052,7 @@ name = "snap24-app"
 version = "0.1.0"
 dependencies = [
  "bevy",
+ "cc",
  "objc2 0.6.4",
  "objc2-ui-kit 0.3.2",
  "snap24-core",

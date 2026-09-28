@@ -65,6 +65,38 @@ writes to the workspace `target/` directory.
 3. **Debuggability** — `bevy_mobile_example` keeps its template name; the app
    product is `Snap24.app` (`PRODUCT_NAME = Snap24`).
 
+## iOS 27 scene lifecycle (required to launch)
+
+**Symptom:** the app crashed at launch on iOS 27 with `EXC_BREAKPOINT (SIGTRAP)`,
+top frame `___UIApplicationEvaluateRuntimeIssueForNoSceneLifecycleAdoption`.
+The simulator (iOS 26.5) only logs a warning, so it passed there.
+
+**Cause:** apps built against the iOS 27 SDK must adopt the UIKit scene-based
+lifecycle or UIKit kills them at launch. winit 0.30 builds a plain
+`initWithFrame:` window and never attaches it to a `UIWindowScene`; upstream is
+tracked in [winit#4224](https://github.com/rust-windowing/winit/issues/4224)
+(fix not scheduled).
+
+**Fix (temporary, until winit adopts scenes):**
+
+| Piece | What it does |
+|---|---|
+| `ios-src/Info.plist` | `UIApplicationSceneManifest` naming `S24SceneDelegate` as the scene delegate |
+| `ios-shim/S24Scene.m` | Swizzles `-[UIWindow makeKeyAndVisible]`: winit's orphan `WinitUIWindow` is attached to the connected `UIWindowScene` (or parked and flushed on connect). Ported from [bevy_ios_toolkit](https://github.com/marmikshah/bevy_ios_toolkit)'s `Scene.swift` (MIT) |
+| `build.rs` | Compiles the shim with `cc` for iOS only (`-fobjc-arc`, correct `-isysroot`) |
+| `main.rs` | Calls `s24_register_scene_delegate()` before the event loop, so the swizzle is in place before winit shows its window |
+
+No lifecycle callbacks are forwarded: winit drives its event loop from app-level
+`NSNotification`s (`event_loop.rs`), which still fire under the scene lifecycle.
+
+**Verified** on the iOS 26.5 simulator: renders normally and the
+`does not adopt UIScene lifecycle` warning is gone (and the process now has a
+real `FBScene`). Delete the shim once winit attaches its windows to a scene.
+
+Note: invoking `cargo build --target aarch64-apple-ios` by hand needs
+`IPHONEOS_DEPLOYMENT_TARGET=15.0`, otherwise prebuilt C objects (built for the
+SDK's version) fail to link. Xcode's build phase sets it for you.
+
 ## Adaptation (ticket 12)
 
 - **Scaling** — `fit_ui` sets `UiScale` from the window so the desktop-pixel

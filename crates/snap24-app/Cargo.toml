@@ -13,6 +13,10 @@ bevy = { version = "0.19", features = ["wav"] }
 # Scripted playthroughs + screenshots for debugging. Never enabled by default.
 devtools = []
 
+[build-dependencies]
+# Compiles the iOS UIScene shim (see build.rs); already in the dependency tree.
+cc = "1"
+
 [target.'cfg(target_os = "ios")'.dependencies]
 objc2 = "0.6"
 objc2-ui-kit = "0.3"

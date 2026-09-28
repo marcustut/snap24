@@ -392,7 +392,21 @@ struct FxPrev {
     hidden: bool,
 }
 
+#[cfg(target_os = "ios")]
+unsafe extern "C" {
+    /// Adopts the UIScene lifecycle (see `ios-shim/S24Scene.m`). Must run before
+    /// winit makes its window visible.
+    fn s24_register_scene_delegate();
+}
+
 fn main() {
+    // iOS 27 kills apps linked against its SDK that haven't adopted scenes, so
+    // install the shim before winit creates/show its window.
+    #[cfg(target_os = "ios")]
+    unsafe {
+        s24_register_scene_delegate();
+    }
+
     let mut app = App::new();
     app.add_plugins(TabNavigationPlugin);
     app.add_plugins(DefaultPlugins.set(WindowPlugin {
