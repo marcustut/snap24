@@ -8,7 +8,7 @@ Fill the `<...>` placeholders before submitting. Character limits noted.
 |---|---|
 | Name (30) | `Snap 24` |
 | Subtitle (30) | `Card maths against the clock` |
-| Bundle ID | `com.snap24.game` |
+| Bundle ID | `me.marcustut.snap24` |
 | Primary category | Games › Puzzle |
 | Secondary category | Games › Card |
 | Age rating | 4+ (no objectionable content) |

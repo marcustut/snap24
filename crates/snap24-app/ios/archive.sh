@@ -9,7 +9,7 @@
 #   xcrun altool --upload-app -f <ipa> -t ios -u <apple-id> -p <app-specific-password>
 #
 # Requires: an Apple Developer account, a distribution certificate and an
-# App Store provisioning profile for com.snap24.game registered in App Store
+# App Store provisioning profile for me.marcustut.snap24 registered in App Store
 # Connect (create the app record first).
 set -euo pipefail
 

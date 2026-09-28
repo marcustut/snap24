@@ -10,7 +10,7 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 WORKSPACE="$(cd "$SCRIPT_DIR/../../.." && pwd)"
 PROJECT="$SCRIPT_DIR/bevy_mobile_example.xcodeproj"
 DERIVED="${DERIVED_DATA:-/tmp/s24-ios-build}"
-BUNDLE_ID="com.snap24.game"
+BUNDLE_ID="me.marcustut.snap24"
 
 DEVICE="${1:-$(xcrun simctl list devices available | grep -m1 -Eo '[0-9a-f]{8}-([0-9a-f]{4}-){3}[0-9a-f]{12}')}"
 SHOT="${2:-}"

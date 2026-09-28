@@ -17,7 +17,7 @@ Project layout:
 | Path | What |
 |---|---|
 | `bevy_mobile_example.xcodeproj/` | Xcode project (target/scheme kept from the template) |
-| `ios-src/Info.plist` | app plist; bundle id comes from the project (`com.snap24.game`) |
+| `ios-src/Info.plist` | app plist; bundle id comes from the project (`me.marcustut.snap24`) |
 | `build_rust_deps.sh` | Xcode run-script phase: cargo-builds `snap24-app` for the right target and `lipo`s it into the app bundle |
 | `run-sim.sh` | convenience: build + install + launch on a simulator |
 
@@ -47,7 +47,7 @@ xcodebuild -project crates/snap24-app/ios/bevy_mobile_example.xcodeproj \
   ENABLE_USER_SCRIPT_SANDBOXING=NO
 
 xcrun simctl install "$DEVICE" /tmp/s24-ios-build/Build/Products/Debug-iphonesimulator/Snap24.app
-xcrun simctl launch  "$DEVICE" com.snap24.game
+xcrun simctl launch  "$DEVICE" me.marcustut.snap24
 xcrun simctl io "$DEVICE" screenshot /tmp/sim.png   # optional
 ```
 
@@ -90,14 +90,14 @@ Configured in the project:
 | Item | Where |
 |---|---|
 | Name "Snap 24" | `ios-src/Info.plist` → `CFBundleDisplayName` |
-| Bundle id | project → `PRODUCT_BUNDLE_IDENTIFIER = com.snap24.game` |
+| Bundle id | project → `PRODUCT_BUNDLE_IDENTIFIER = me.marcustut.snap24` |
 | App icon | `Assets.xcassets/AppIcon.appiconset/AppIcon-1024.png` (regenerate with `python3 make_icon.py`) + `ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon` |
 | Launch screen | `Info.plist` → empty `UILaunchScreen` dict (solid background) |
 | Device family | iPhone (`TARGETED_DEVICE_FAMILY = 1`) |
 
 **What still needs you (I can't do it):** signing and upload, which need your Apple
 Developer account. Create the app record in App Store Connect for
-`com.snap24.game`, then:
+`me.marcustut.snap24`, then:
 
 ```sh
 DEVELOPMENT_TEAM=<your-team-id> crates/snap24-app/ios/archive.sh
