@@ -214,7 +214,7 @@ fn run_script(
             game.reveal_total = solutions.len();
             game.message = format_solution(&solutions, game.reveal_shown);
         }
-        Step::New => crate::deal(&mut game, &mut timer, time.elapsed_secs()),
+        Step::New => crate::next_puzzle(&mut game, &mut timer, time.elapsed_secs()),
         Step::Menu => next.set(Screen::ModeSelect),
         Step::Target(value) => {
             entry.clear();

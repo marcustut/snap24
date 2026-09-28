@@ -111,6 +111,9 @@ struct Game {
     hint_level: u32,
     /// Session-wide sound mute.
     muted: bool,
+    /// A player-typed Custom target persists across rounds; `None` means the
+    /// target is drawn fresh from each hand ("Random").
+    custom_target: Option<i64>,
     message: String,
     /// How many reveal solutions are currently shown, and how many exist.
     reveal_shown: usize,
@@ -133,6 +136,7 @@ impl Game {
             hints_used: 0,
             hint_level: 0,
             muted: false,
+            custom_target: None,
             message: String::new(),
             reveal_shown: 0,
             reveal_total: 0,
@@ -245,34 +249,28 @@ fn start_puzzle(game: &mut Game, timer: &mut ViewTimer, now: f32, puzzle: Puzzle
     game.last_score = None;
 }
 
-fn deal(game: &mut Game, timer: &mut ViewTimer, now: f32) {
-    let puzzle = generate(game.mode, game.difficulty, &mut game.rng);
-    start_puzzle(game, timer, now, puzzle);
-}
-
-/// Start a fresh game from the menu. Resets the running total, which otherwise
-/// accumulates across rounds (including "New Puzzle") within one game.
-fn begin_game(game: &mut Game, timer: &mut ViewTimer, now: f32, entry: &TargetEntry) {
-    game.total_score = 0;
-    if game.mode == Mode::Custom {
-        deal_custom(game, timer, now, entry);
-    } else {
-        deal(game, timer, now);
-    }
-}
-
-/// Custom start: use the typed target if there is one, otherwise random.
-fn deal_custom(game: &mut Game, timer: &mut ViewTimer, now: f32, entry: &TargetEntry) {
-    let puzzle = match entry.value() {
-        Some(target) => generate_targeted(
+/// Deal the next round. A Custom target the player typed is kept for every
+/// round; "Random" (no pinned target) draws a new target from each hand.
+fn next_puzzle(game: &mut Game, timer: &mut ViewTimer, now: f32) {
+    let puzzle = match (game.mode, game.custom_target) {
+        (Mode::Custom, Some(target)) => generate_targeted(
             Mode::Custom,
             game.difficulty,
             Rational::from(target),
             &mut game.rng,
         ),
-        None => generate(Mode::Custom, game.difficulty, &mut game.rng),
+        (Mode::Custom, None) => generate(Mode::Custom, game.difficulty, &mut game.rng),
+        (Mode::Classic, _) => generate(Mode::Classic, game.difficulty, &mut game.rng),
     };
     start_puzzle(game, timer, now, puzzle);
+}
+
+/// Start a fresh game from the menu: reset the running total, then pin the
+/// player's chosen target (or `None` for Random) for the whole session.
+fn begin_game(game: &mut Game, timer: &mut ViewTimer, now: f32, entry: &TargetEntry) {
+    game.total_score = 0;
+    game.custom_target = if game.mode == Mode::Custom { entry.value() } else { None };
+    next_puzzle(game, timer, now);
 }
 
 fn initial_seed() -> u64 {
@@ -1908,7 +1906,7 @@ fn new_puzzle(
     >,
 ) {
     if pressed(&interactions) {
-        deal(&mut game, &mut timer, time.elapsed_secs());
+        next_puzzle(&mut game, &mut timer, time.elapsed_secs());
     }
 }
 
@@ -2140,12 +2138,51 @@ mod game_tests {
         }
     }
 
+    fn entry_with(digits: &str) -> TargetEntry {
+        let mut entry = TargetEntry::default();
+        for c in digits.chars() {
+            entry.push(c.to_digit(10).unwrap());
+        }
+        entry
+    }
+
+    #[test]
+    fn a_pinned_custom_target_persists_across_rounds() {
+        let mut game = Game::new();
+        let mut timer = ViewTimer::default();
+        game.mode = Mode::Custom;
+        game.difficulty = Difficulty::Hard;
+        begin_game(&mut game, &mut timer, 0.0, &entry_with("46"));
+        assert_eq!(game.round.target, Rational::from(46));
+
+        next_puzzle(&mut game, &mut timer, 0.0); // "New puzzle" / "Next puzzle"
+        assert_eq!(
+            game.round.target,
+            Rational::from(46),
+            "a pinned target must survive into the next round"
+        );
+    }
+
+    #[test]
+    fn random_target_is_not_pinned_and_classic_ignores_the_entry() {
+        let mut game = Game::new();
+        let mut timer = ViewTimer::default();
+        game.mode = Mode::Custom;
+        begin_game(&mut game, &mut timer, 0.0, &TargetEntry::default());
+        assert_eq!(game.custom_target, None, "Random draws a fresh target each round");
+
+        game.mode = Mode::Classic;
+        begin_game(&mut game, &mut timer, 0.0, &entry_with("46"));
+        assert_eq!(game.custom_target, None);
+        assert_eq!(game.round.target, Rational::from(24));
+    }
+
     #[test]
     fn new_puzzle_keeps_the_running_total() {
         let mut game = Game::new();
         let mut timer = ViewTimer::default();
         game.total_score = 123;
-        deal(&mut game, &mut timer, 0.0);
+        next_puzzle(&mut game, &mut timer, 0.0);
         assert_eq!(game.total_score, 123);
     }
 }
