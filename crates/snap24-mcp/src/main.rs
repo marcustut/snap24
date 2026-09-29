@@ -498,10 +498,59 @@ impl ServerHandler for Snap24 {
     }
 }
 
+/// Serve the MCP endpoint over streamable HTTP (what ChatGPT connectors need).
+///
+/// Public deployments must name their host: rmcp only allows loopback hosts by
+/// default, to block DNS-rebinding attacks.
+async fn serve_http(addr: &str) -> Result<(), Box<dyn std::error::Error>> {
+    use rmcp::transport::streamable_http_server::{
+        StreamableHttpServerConfig, StreamableHttpService, session::local::LocalSessionManager,
+    };
+
+    let allowed_hosts: Vec<String> = std::env::var("SNAP24_MCP_ALLOWED_HOSTS")
+        .unwrap_or_else(|_| "localhost,127.0.0.1,::1".to_string())
+        .split(',')
+        .map(|host| host.trim().to_string())
+        .filter(|host| !host.is_empty())
+        .collect();
+
+    let config = StreamableHttpServerConfig::default().with_allowed_hosts(allowed_hosts);
+    let service: StreamableHttpService<Snap24, LocalSessionManager> =
+        StreamableHttpService::new(
+            || Ok(Snap24::new()),
+            Arc::new(LocalSessionManager::default()),
+            config,
+        );
+
+    let router = axum::Router::new().nest_service("/mcp", service);
+    let listener = tokio::net::TcpListener::bind(addr).await?;
+    eprintln!("snap24-mcp serving streamable HTTP on http://{addr}/mcp");
+
+    axum::serve(listener, router)
+        .with_graceful_shutdown(async {
+            let _ = tokio::signal::ctrl_c().await;
+        })
+        .await?;
+    Ok(())
+}
+
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    // stdout is the MCP channel, so never print anything else to it.
-    let service = Snap24::new().serve(stdio()).await?;
-    service.waiting().await?;
+    let mut args = std::env::args().skip(1);
+    match args.next().as_deref() {
+        // Default: stdio, for local tools and Codex.
+        None => {
+            let service = Snap24::new().serve(stdio()).await?;
+            service.waiting().await?;
+        }
+        Some("--http") => {
+            let addr = args.next().unwrap_or_else(|| "127.0.0.1:8787".to_string());
+            serve_http(&addr).await?;
+        }
+        Some(other) => {
+            eprintln!("usage: snap24-mcp [--http [ADDR]]  (got {other:?})");
+            std::process::exit(2);
+        }
+    }
     Ok(())
 }

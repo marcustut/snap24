@@ -39,9 +39,27 @@ Apps bridge (`postMessage` JSON-RPC).
 ## Run
 
 ```sh
-cargo run -p snap24-mcp            # stdio MCP server
+cargo run -p snap24-mcp            # stdio MCP server (local tools, Codex)
 cargo test -p snap24-mcp           # protocol test: handshake, tools, resources, widget meta
 ```
+
+### Streamable HTTP (what ChatGPT connectors need)
+
+```sh
+cargo run -p snap24-mcp -- --http 127.0.0.1:8899
+# MCP endpoint: POST http://127.0.0.1:8899/mcp
+```
+
+For a public deployment, name your host — rmcp only accepts loopback `Host`
+headers by default, to block DNS-rebinding attacks:
+
+```sh
+SNAP24_MCP_ALLOWED_HOSTS=snap24.marcustut.me \
+  cargo run -p snap24-mcp -- --http 127.0.0.1:8899
+```
+
+Requests with any other `Host` get `403`. `SNAP24_MCP_ALLOWED_HOSTS` is a
+comma-separated list; it replaces the default `localhost,127.0.0.1,::1`.
 
 ## Local end-to-end (host simulator)
 
@@ -64,11 +82,10 @@ If Playwright isn't resolvable from the repo, point at it:
 
 This is the part that needs your OpenAI account and a reachable server:
 
-1. **Deploy over streamable HTTP.** ChatGPT needs a remote HTTPS endpoint;
-   stdio is for local tools/Codex. Add
-   `rmcp = { features = ["transport-streamable-http-server"] }` and serve
-   `StreamableHttpService` (a small `axum`/`hyper` binary), then put it behind
-   HTTPS — `snap24.marcustut.me` is the natural host.
+1. **Deploy over streamable HTTP.** ChatGPT needs a remote HTTPS endpoint; stdio
+   is for local tools/Codex. Run with `--http` (above) and put it behind TLS —
+   `snap24.marcustut.me` is the natural host. Remember
+   `SNAP24_MCP_ALLOWED_HOSTS=<your public host>`.
 2. In ChatGPT, enable **Developer mode** and add the MCP server URL as a
    connector.
 3. Ask it to *"play Snap 24"* → it calls `start_puzzle` then `render_board`, and
