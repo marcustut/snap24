@@ -112,7 +112,7 @@
 
   const callTool = (name, args) =>
     request("tools/call", { name, arguments: args }).then((r) => {
-      if (r && r.structuredContent && r.structuredContent.puzzle_id) return r.structuredContent;
+      if (r && r.structuredContent) return r.structuredContent;
       if (r && Array.isArray(r.content)) {
         const text = r.content.filter((c) => c && c.type === "text").map((c) => c.text).join("\n");
         return text;
@@ -144,6 +144,7 @@
   const eq = (a, b) => a.n === b.n && a.d === b.d;
   const fmt = (a) => (a.d === 1 ? String(a.n) : a.n + "/" + a.d);
   const rank = (n) => ({ 1: "A", 11: "J", 12: "Q", 13: "K" })[n] || String(n);
+  const cap = (s) => (typeof s === "string" && s ? s[0].toUpperCase() + s.slice(1) : "");
 
   // ---- state ---------------------------------------------------------------
   let S = { id: null, mode: "classic", difficulty: "easy", target: rat(24), cards: [], sel: [], op: null, phase: "playing", view: null, left: null, history: [] };
@@ -156,7 +157,7 @@
     S.id = view.puzzle_id;
     S.mode = view.mode;
     S.difficulty = view.difficulty;
-    S.target = rat(Number(view.target_n) || 0, Number(view.target_d) || 1);
+    S.target = rat(Number(view.target && view.target.n) || 0, Number(view.target && view.target.d) || 1);
     // Leaves keep the dealt rank as their expression, so the finished round can
     // be submitted to the server for validation.
     S.cards = (view.cards || []).map((v) => {
@@ -166,7 +167,7 @@
     S.sel = []; S.op = null; S.phase = "playing"; S.history = [];
     S.view = view.view_seconds;
     S.left = typeof view.view_seconds === "number" ? view.view_seconds : null;
-    $("chip").textContent = view.mode + " · " + view.difficulty;
+    $("chip").textContent = cap(view.mode) + " · " + cap(view.difficulty);
     setMessage("");
     if (S.left !== null && S.left > 0) {
       timer = setInterval(() => {
@@ -264,7 +265,7 @@
     paint();
     // Authoritative check: the server validates the expression we built.
     const verdict = await callTool("submit_solution", { puzzle_id: S.id, expression: expression() });
-    if (typeof verdict === "string" && verdict) setMessage(verdict);
+    if (verdict && verdict.message) setMessage(verdict.message);
   }
 
   $("undo").addEventListener("click", () => {
@@ -274,14 +275,19 @@
     setMessage(""); paint();
   });
 
-  $("hint").addEventListener("click", async () => setMessage(await callTool("hint", { puzzle_id: S.id })));
-  $("reveal").addEventListener("click", async () => setMessage(await callTool("reveal", { puzzle_id: S.id })));
+  $("hint").addEventListener("click", async () => {
+    const h = await callTool("hint", { puzzle_id: S.id });
+    setMessage((h && h.hint) || h);
+  });
+  $("reveal").addEventListener("click", async () => {
+    const r = await callTool("reveal", { puzzle_id: S.id });
+    setMessage((r && r.message) || r);
+  });
 
   async function newPuzzle() {
+    // start_puzzle returns the same board payload render_board does.
     const dealt = await callTool("start_puzzle", { mode: S.mode, difficulty: S.difficulty });
-    const id = typeof dealt === "string" && /puzzle_id:\s*(\S+)/.exec(dealt) ? RegExp.$1 : S.id;
-    const view = await callTool("render_board", { puzzle_id: id });
-    if (view && view.puzzle_id) startRound(view);
+    if (dealt && dealt.puzzle_id) startRound(dealt);
   }
   $("next").addEventListener("click", newPuzzle);
   $("giveup").addEventListener("click", newPuzzle);

@@ -1,93 +1,10 @@
-//! End-to-end test: spawn the real server binary and speak MCP (JSON-RPC 2.0
-//! over stdio, newline-delimited) to it, exactly how a host would.
+//! End-to-end test: spawn the real server binary and speak MCP to it, exactly
+//! how a host would.
 
-use std::io::{BufRead, BufReader, Write};
-use std::process::{Child, ChildStdin, ChildStdout, Command, Stdio};
+mod common;
 
-use serde_json::{json, Value};
-
-struct Server {
-    child: Child,
-    stdin: ChildStdin,
-    stdout: BufReader<ChildStdout>,
-    next_id: u64,
-}
-
-impl Server {
-    fn start() -> Self {
-        let mut child = Command::new(env!("CARGO_BIN_EXE_snap24-mcp"))
-            .stdin(Stdio::piped())
-            .stdout(Stdio::piped())
-            .stderr(Stdio::null())
-            .spawn()
-            .expect("spawn server");
-        let stdin = child.stdin.take().unwrap();
-        let stdout = BufReader::new(child.stdout.take().unwrap());
-        Server { child, stdin, stdout, next_id: 0 }
-    }
-
-    fn send(&mut self, message: Value) {
-        writeln!(self.stdin, "{message}").expect("write");
-        self.stdin.flush().expect("flush");
-    }
-
-    /// Send a request and read until its response (skipping notifications).
-    fn request(&mut self, method: &str, params: Value) -> Value {
-        self.next_id += 1;
-        let id = self.next_id;
-        self.send(json!({"jsonrpc": "2.0", "id": id, "method": method, "params": params}));
-        loop {
-            let mut line = String::new();
-            let read = self.stdout.read_line(&mut line).expect("read");
-            assert!(read > 0, "server closed the stream during {method}");
-            let value: Value = serde_json::from_str(&line).expect("valid json-rpc");
-            if value.get("id").and_then(Value::as_u64) == Some(id) {
-                if let Some(error) = value.get("error") {
-                    panic!("{method} returned an error: {error}");
-                }
-                return value["result"].clone();
-            }
-            // otherwise it's a notification (e.g. logging) — keep reading
-        }
-    }
-
-    fn initialize(&mut self) {
-        let result = self.request(
-            "initialize",
-            json!({
-                "protocolVersion": "2026-07-28",
-                "capabilities": {},
-                "clientInfo": {"name": "snap24-test", "version": "0"}
-            }),
-        );
-        assert!(result.get("serverInfo").is_some(), "initialize: {result}");
-        self.send(json!({"jsonrpc": "2.0", "method": "notifications/initialized"}));
-    }
-
-    /// Call a tool and return the whole result (for structured content).
-    fn call_result(&mut self, tool: &str, arguments: Value) -> Value {
-        self.request("tools/call", json!({"name": tool, "arguments": arguments}))
-    }
-
-    /// Call a tool and return its first text content block.
-    fn call(&mut self, tool: &str, arguments: Value) -> String {
-        let result = self.request("tools/call", json!({"name": tool, "arguments": arguments}));
-        result["content"]
-            .as_array()
-            .and_then(|blocks| {
-                blocks.iter().find_map(|b| {
-                    (b["type"] == "text").then(|| b["text"].as_str().unwrap_or_default().to_string())
-                })
-            })
-            .unwrap_or_default()
-    }
-}
-
-impl Drop for Server {
-    fn drop(&mut self) {
-        let _ = self.child.kill();
-    }
-}
+use common::Server;
+use serde_json::json;
 
 #[test]
 fn tools_work_over_stdio() {
@@ -155,15 +72,34 @@ fn tools_work_over_stdio() {
         "widget description: {contents_meta}"
     );
 
-    // 2. Deal a deterministic Classic puzzle.
-    let dealt = server.call("start_puzzle", json!({"mode": "classic", "difficulty": "easy", "seed": 5}));
-    assert!(dealt.contains("target 24"), "dealt: {dealt}");
-    let puzzle_id = dealt
-        .lines()
-        .find_map(|l| l.strip_prefix("puzzle_id: "))
-        .expect("puzzle id")
-        .trim()
-        .to_string();
+    // 2. Deal a deterministic Classic puzzle: structured, not just prose.
+    let dealt = server.call_result(
+        "start_puzzle",
+        json!({"mode": "classic", "difficulty": "easy", "seed": 5}),
+    );
+    let board = &dealt["structuredContent"];
+    assert_eq!(board["target"]["n"], 24, "dealt: {dealt}");
+    assert_eq!(board["target"]["d"], 1, "dealt: {dealt}");
+    assert_eq!(board["mode"], "classic", "dealt: {dealt}");
+    assert_eq!(board["difficulty"], "easy", "dealt: {dealt}");
+    assert_eq!(board["cards"].as_array().map(Vec::len), Some(5), "dealt: {dealt}");
+    let puzzle_id = board["puzzle_id"].as_str().expect("puzzle id").to_string();
+    // The prose stays as the display string.
+    assert!(
+        dealt["content"][0]["text"].as_str().unwrap_or_default().contains("target 24"),
+        "summary: {dealt}"
+    );
+    // start_puzzle opens the board itself, so the UI doesn't need a second call.
+    let start_tool = tools["tools"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|t| t["name"] == "start_puzzle")
+        .unwrap();
+    assert_eq!(
+        start_tool["_meta"]["ui"]["resourceUri"], "ui://snap24/board.html",
+        "start_puzzle must advertise the widget: {start_tool}"
+    );
 
     // 2a. start_puzzle mutates state, so it must not claim read-only.
     let start = tools["tools"]
@@ -174,44 +110,70 @@ fn tools_work_over_stdio() {
         .unwrap();
     assert_eq!(start["annotations"]["readOnlyHint"], false, "{start}");
 
-    // 2b. render_board returns structured content for the widget.
+    // 2b. render_board returns the same payload as start_puzzle.
     let view = server.call_result("render_board", json!({"puzzle_id": puzzle_id}));
-    assert_eq!(view["structuredContent"]["target_n"], 24, "view: {view}");
-    assert_eq!(view["structuredContent"]["puzzle_id"], puzzle_id);
-    assert!(view["structuredContent"]["view_seconds"].is_null(), "Easy is unlimited: {view}");
+    assert_eq!(view["structuredContent"], *board, "view: {view}");
 
-    // 3. Hints advance one level per call, and an explicit level works.
-    let h1 = server.call("hint", json!({"puzzle_id": puzzle_id}));
-    assert!(h1.starts_with("Hint 1"), "hint 1: {h1}");
-    let h2 = server.call("hint", json!({"puzzle_id": puzzle_id}));
-    assert!(h2.starts_with("Hint 2"), "hint 2: {h2}");
-    let h4 = server.call("hint", json!({"puzzle_id": puzzle_id, "level": 4}));
-    assert!(h4.contains("full solution"), "hint 4: {h4}");
+    // 3. Hints advance one level per call, and say which level they gave.
+    let h1 = server.call_result("hint", json!({"puzzle_id": puzzle_id}));
+    assert_eq!(h1["structuredContent"]["level"], 1, "hint 1: {h1}");
+    assert_eq!(h1["structuredContent"]["next_level"], 2, "hint 1: {h1}");
+    let h2 = server.call_result("hint", json!({"puzzle_id": puzzle_id}));
+    assert_eq!(h2["structuredContent"]["level"], 2, "hint 2: {h2}");
+    let h4 = server.call_result("hint", json!({"puzzle_id": puzzle_id, "level": 4}));
+    assert_eq!(h4["structuredContent"]["level"], 4, "hint 4: {h4}");
+    assert_eq!(h4["structuredContent"]["next_level"], 4, "level caps at 4: {h4}");
 
-    // 4. A wrong submission is rejected, not crashed.
-    let bad = server.call("submit_solution", json!({"puzzle_id": puzzle_id, "expression": "1 + 1"}));
-    assert!(bad.starts_with("rejected"), "bad: {bad}");
+    // 4. A wrong submission is a *result* (accepted: false), not a crash.
+    let bad = server.call_result(
+        "submit_solution",
+        json!({"puzzle_id": puzzle_id, "expression": "1 + 1"}),
+    );
+    assert_eq!(bad["structuredContent"]["accepted"], false, "bad: {bad}");
+    assert_eq!(
+        bad["structuredContent"]["reason"], "invalid_expression",
+        "cards were reused: {bad}"
+    );
+    assert!(bad["structuredContent"]["value"].is_null(), "no value: {bad}");
 
     // 5. A real solution taken from reveal must be accepted.
-    let revealed = server.call("reveal", json!({"puzzle_id": puzzle_id}));
-    let first = revealed
-        .split(": ")
-        .nth(1)
-        .expect("solution list")
-        .split(" ; ")
-        .next()
-        .expect("first solution")
-        .trim()
-        .to_string();
-    let accepted = server.call(
+    let revealed = server.call_result("reveal", json!({"puzzle_id": puzzle_id}));
+    let revealed = &revealed["structuredContent"];
+    assert!(revealed["count"].as_u64().unwrap_or(0) > 0, "reveal: {revealed}");
+    assert_eq!(revealed["shown"], 5, "listing is capped: {revealed}");
+    let first = revealed["solutions"][0].as_str().expect("a solution").to_string();
+    let accepted = server.call_result(
         "submit_solution",
         json!({"puzzle_id": puzzle_id, "expression": first}),
     );
-    assert!(accepted.starts_with("accepted"), "accepted: {accepted}");
+    assert_eq!(accepted["structuredContent"]["accepted"], true, "accepted: {accepted}");
+    assert_eq!(accepted["structuredContent"]["reason"], "accepted", "accepted: {accepted}");
+    assert_eq!(accepted["structuredContent"]["value"]["n"], 24, "accepted: {accepted}");
 
-    // 6. Explain walks through a solution.
-    let explained = server.call("explain", json!({"puzzle_id": puzzle_id}));
-    assert!(explained.contains('='), "explain: {explained}");
+    // 5b. An expression that uses every card but misses the target is
+    // "wrong_target", not "invalid".
+    let missed = server.call_result(
+        "submit_solution",
+        json!({"puzzle_id": puzzle_id, "expression": "1 + 2 + 3 + 4 + 5"}),
+    );
+    let missed = &missed["structuredContent"];
+    assert_eq!(missed["accepted"], false, "missed: {missed}");
+    assert_eq!(
+        missed["reason"], "invalid_expression",
+        "those cards can't be summed from the dealt hand: {missed}"
+    );
+
+    // 6. Explain walks through a solution, as data and as prose.
+    let explained = server.call_result("explain", json!({"puzzle_id": puzzle_id}));
+    let steps = explained["structuredContent"]["steps"].as_array().cloned().unwrap_or_default();
+    assert!(!steps.is_empty(), "explain: {explained}");
+    assert!(
+        explained["structuredContent"]["message"]
+            .as_str()
+            .unwrap_or_default()
+            .contains('='),
+        "explain: {explained}"
+    );
 
     // 7. Unknown ids are a friendly error, not a panic.
     let missing = server.call("reveal", json!({"puzzle_id": "nope"}));

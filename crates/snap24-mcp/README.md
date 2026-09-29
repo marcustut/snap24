@@ -6,6 +6,11 @@ solver-backed tools and an optional MCP Apps board widget, all built on
 
 ## Tools
 
+The published contract — names, parameters, result shapes, annotations — is
+frozen in **[`docs/mcp-surface.md`](../../docs/mcp-surface.md)** and enforced by
+`crates/snap24-mcp/tests/surface.rs`. Every tool returns a human summary plus
+`structuredContent`; changing either is a release, not a refactor.
+
 | Tool | Read-only | Does |
 |---|---|---|
 | `start_puzzle` | no | deal Classic (target 24) or Custom (random **or** a typed target), any tier, optional `seed` |

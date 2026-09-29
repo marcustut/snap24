@@ -22,16 +22,16 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use rmcp::handler::server::wrapper::Parameters;
 use rmcp::model::{
-    ListResourcesResult, MetaObject, PaginatedRequestParams, ReadResourceRequestParams,
-    ReadResourceResponse, ReadResourceResult, Resource, ResourceContents, ServerCapabilities,
-    ServerConfig,
+    CallToolResult, ContentBlock, Implementation, ListResourcesResult, MetaObject,
+    PaginatedRequestParams, ReadResourceRequestParams, ReadResourceResponse, ReadResourceResult,
+    Resource, ResourceContents, ServerCapabilities, ServerConfig,
 };
 use rmcp::service::{RequestContext, RoleServer};
 use rmcp::transport::stdio;
 use rmcp::{
-    schemars, tool, tool_handler, tool_router, ErrorData, Json, ServerHandler, ServiceExt,
+    schemars, tool, tool_handler, tool_router, ErrorData, ServerHandler, ServiceExt,
 };
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use snap24_core::{
     evaluate, first_move, generate, generate_targeted, move_sequence, solutions_infix, Difficulty,
     Mode, Puzzle, Rational, Rng,
@@ -94,29 +94,155 @@ fn meta(value: serde_json::Value) -> MetaObject {
     MetaObject(value.as_object().expect("object").clone())
 }
 
-/// What `render_board` hands the widget (and mirrors as text for the model).
-#[derive(serde::Serialize, schemars::JsonSchema)]
-struct BoardView {
+/// An exact rational on the wire. The game is fraction-exact, so `1/3` must not
+/// become `0.333…`.
+#[derive(Serialize, schemars::JsonSchema)]
+struct ExactValue {
+    n: i64,
+    d: i64,
+}
+
+impl From<Rational> for ExactValue {
+    fn from(value: Rational) -> Self {
+        let (n, d) = value.parts();
+        Self { n, d }
+    }
+}
+
+/// The board, as machine-readable state. Returned by both `start_puzzle` and
+/// `render_board`, so a host can deal and render from one payload.
+#[derive(Serialize, schemars::JsonSchema)]
+struct BoardPayload {
+    /// Opaque handle; pass it to the other tools.
     puzzle_id: String,
+    /// "classic" | "custom" — matches the `mode` input.
     mode: String,
+    /// "easy" | "medium" | "hard" | "expert" | "insane" | "blind".
     difficulty: String,
+    /// Dealt ranks: A=1, J=11, Q=12, K=13.
     cards: Vec<i64>,
-    target_n: i64,
-    target_d: i64,
-    /// `None` = visible indefinitely, `0` = never shown (Blind).
+    /// What the hand must reach.
+    target: ExactValue,
+    /// `null` = visible indefinitely, `0` = never shown (blind).
     view_seconds: Option<u32>,
+}
+
+/// Why an expression was not accepted.
+#[derive(Serialize, schemars::JsonSchema)]
+#[serde(rename_all = "snake_case")]
+enum SolveReason {
+    /// Every card used once and the result equals the target.
+    Accepted,
+    /// A valid expression over the right cards, but it lands elsewhere.
+    WrongTarget,
+    /// Cards reused, cards missing, unparseable, or division by zero.
+    InvalidExpression,
+}
+
+/// Verdict for a submitted expression.
+#[derive(Serialize, schemars::JsonSchema)]
+struct SolveVerdict {
+    /// True only when every card is used exactly once and the result equals the target.
+    accepted: bool,
+    /// The expression's exact value; `null` when it could not be evaluated.
+    value: Option<ExactValue>,
+    /// Always present, so the caller never has to infer "why not".
+    reason: SolveReason,
+    /// Human summary (safe to show the player).
+    message: String,
+}
+
+/// One progressive hint.
+#[derive(Serialize, schemars::JsonSchema)]
+struct HintPayload {
+    /// Level this hint is (1 = which two cards, 2 = operator, 3 = sub-result, 4 = full solution).
+    level: u32,
+    /// Level the next `hint` call will give, capped at 4.
+    next_level: u32,
+    hint: String,
+}
+
+/// The distinct-solution listing.
+#[derive(Serialize, schemars::JsonSchema)]
+struct RevealPayload {
+    /// Total distinct canonical solutions.
+    count: usize,
+    /// How many are listed in `solutions`.
+    shown: usize,
+    /// True when `count > shown`.
+    truncated: bool,
+    solutions: Vec<String>,
+    message: String,
+}
+
+/// A walkthrough of one solution.
+#[derive(Serialize, schemars::JsonSchema)]
+struct ExplainPayload {
+    /// The expression being explained, when the player supplied one.
+    expression: Option<String>,
+    /// Ordered moves: first the merge steps, then the result.
+    steps: Vec<String>,
+    message: String,
 }
 
 // --------------------------------------------------------------------------- //
 // tool parameters                                                             //
 // --------------------------------------------------------------------------- //
 
+/// Puzzle recipe. Enum, not a free string, so the contract is unambiguous.
+#[derive(Debug, Clone, Copy, Default, Deserialize, schemars::JsonSchema)]
+#[serde(rename_all = "lowercase")]
+enum ModeArg {
+    #[default]
+    Classic,
+    Custom,
+}
+
+impl From<ModeArg> for Mode {
+    fn from(value: ModeArg) -> Self {
+        match value {
+            ModeArg::Classic => Mode::Classic,
+            ModeArg::Custom => Mode::Custom,
+        }
+    }
+}
+
+/// Difficulty tier.
+#[derive(Debug, Clone, Copy, Default, Deserialize, schemars::JsonSchema)]
+#[serde(rename_all = "lowercase")]
+enum DifficultyArg {
+    #[default]
+    Easy,
+    Medium,
+    Hard,
+    Expert,
+    Insane,
+    Blind,
+}
+
+impl From<DifficultyArg> for Difficulty {
+    fn from(value: DifficultyArg) -> Self {
+        match value {
+            DifficultyArg::Easy => Difficulty::Easy,
+            DifficultyArg::Medium => Difficulty::Medium,
+            DifficultyArg::Hard => Difficulty::Hard,
+            DifficultyArg::Expert => Difficulty::Expert,
+            DifficultyArg::Insane => Difficulty::Insane,
+            DifficultyArg::Blind => Difficulty::Blind,
+        }
+    }
+}
+
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
 struct StartParams {
-    /// "classic" (target 24) or "custom" (target drawn from the hand).
-    mode: Option<String>,
-    /// easy | medium | hard | expert | insane | blind (or 1..6).
-    difficulty: Option<String>,
+    /// Which puzzle recipe to deal: "classic" (target 24, five cards) or
+    /// "custom" (card count from the ladder, target drawn from the hand).
+    #[serde(default)]
+    mode: ModeArg,
+    /// Difficulty tier. Higher tiers hide the cards sooner.
+    #[serde(default)]
+    difficulty: DifficultyArg,
     /// Custom only: a specific target the dealt hand must be able to reach.
     target: Option<i64>,
     /// Reproducible deal.
@@ -124,12 +250,14 @@ struct StartParams {
 }
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
 struct IdParams {
     /// The `puzzle_id` returned by start_puzzle.
     puzzle_id: String,
 }
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
 struct SubmitParams {
     puzzle_id: String,
     /// A player's expression using every card exactly once, e.g. "(9 - 1) * 3".
@@ -137,14 +265,17 @@ struct SubmitParams {
 }
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
 struct HintParams {
     puzzle_id: String,
     /// 1 = which two cards, 2 = operator, 3 = result, 4 = full solution.
-    /// Omit to advance one level per call.
-    level: Option<u32>,
+    /// 0 (the default) advances one level per call.
+    #[serde(default)]
+    level: u32,
 }
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
 struct ExplainParams {
     puzzle_id: String,
     /// Optional expression to explain; defaults to one solution of the puzzle.
@@ -165,25 +296,44 @@ fn rank_label(value: i64) -> String {
     }
 }
 
-fn parse_mode(s: Option<&str>) -> Mode {
-    match s.unwrap_or("classic").to_ascii_lowercase().as_str() {
-        "custom" => Mode::Custom,
-        _ => Mode::Classic,
+/// Machine-readable label (matches the `mode` input enum).
+fn mode_key(mode: Mode) -> &'static str {
+    match mode {
+        Mode::Classic => "classic",
+        Mode::Custom => "custom",
     }
 }
 
-fn parse_difficulty(s: Option<&str>) -> Result<Difficulty, String> {
-    let name = s.unwrap_or("easy").to_ascii_lowercase();
-    match name.as_str() {
-        "easy" | "1" => Ok(Difficulty::Easy),
-        "medium" | "2" => Ok(Difficulty::Medium),
-        "hard" | "3" => Ok(Difficulty::Hard),
-        "expert" | "4" => Ok(Difficulty::Expert),
-        "insane" | "5" => Ok(Difficulty::Insane),
-        "blind" | "6" => Ok(Difficulty::Blind),
-        other => Err(format!(
-            "unknown difficulty {other:?}; use easy/medium/hard/expert/insane/blind"
-        )),
+/// Machine-readable label (matches the `difficulty` input enum).
+fn difficulty_key(difficulty: Difficulty) -> &'static str {
+    match difficulty {
+        Difficulty::Easy => "easy",
+        Difficulty::Medium => "medium",
+        Difficulty::Hard => "hard",
+        Difficulty::Expert => "expert",
+        Difficulty::Insane => "insane",
+        Difficulty::Blind => "blind",
+    }
+}
+
+/// A tool result that carries both the human summary and the machine-readable
+/// payload. The prose is a display string; `structuredContent` is the contract.
+fn ok<T: Serialize>(message: String, payload: &T) -> Result<CallToolResult, String> {
+    let value = serde_json::to_value(payload).map_err(|e| e.to_string())?;
+    let mut result = CallToolResult::structured(value);
+    result.content = vec![ContentBlock::text(message)];
+    Ok(result)
+}
+
+/// The board payload, shared by `start_puzzle` and `render_board`.
+fn board_payload(id: &str, puzzle: &Puzzle) -> BoardPayload {
+    BoardPayload {
+        puzzle_id: id.to_string(),
+        mode: mode_key(puzzle.mode).to_string(),
+        difficulty: difficulty_key(puzzle.difficulty).to_string(),
+        cards: puzzle.cards.clone(),
+        target: puzzle.target.into(),
+        view_seconds: puzzle.difficulty.view_seconds(),
     }
 }
 
@@ -234,10 +384,10 @@ impl Snap24 {
         f(session)
     }
 
-    fn count_hints(session: &mut Session, level: Option<u32>) -> u32 {
+    fn count_hints(session: &mut Session, level: u32) -> u32 {
         session.hint_level = match level {
-            Some(l) => l.clamp(1, 4),
-            None => (session.hint_level + 1).min(4),
+            0 => (session.hint_level + 1).min(4),
+            l => l.clamp(1, 4),
         };
         session.hint_level
     }
@@ -246,12 +396,14 @@ impl Snap24 {
 #[tool_router]
 impl Snap24 {
     #[tool(
-        description = "Deal a Snap 24 puzzle. Returns a puzzle_id plus the dealt cards and target.",
+        description = "Deal a Snap 24 puzzle. Returns a puzzle_id plus the dealt cards and target, and shows the interactive board.",
+        meta = tool_meta(),
+        output_schema = rmcp::handler::server::tool::schema_for_output::<BoardPayload>(),
         annotations(title = "Deal a puzzle", read_only_hint = false, destructive_hint = false, open_world_hint = false)
     )]
-    fn start_puzzle(&self, Parameters(p): Parameters<StartParams>) -> Result<String, String> {
-        let mode = parse_mode(p.mode.as_deref());
-        let difficulty = parse_difficulty(p.difficulty.as_deref())?;
+    fn start_puzzle(&self, Parameters(p): Parameters<StartParams>) -> Result<CallToolResult, String> {
+        let mode: Mode = p.mode.into();
+        let difficulty = Difficulty::from(p.difficulty);
         let seed = p.seed.unwrap_or_else(|| {
             SystemTime::now()
                 .duration_since(UNIX_EPOCH)
@@ -283,6 +435,7 @@ impl Snap24 {
             id
         );
 
+        let payload = board_payload(&id, &puzzle);
         self.sessions.lock().unwrap().insert(
             id,
             Session {
@@ -291,37 +444,50 @@ impl Snap24 {
                 hint_level: 0,
             },
         );
-        Ok(summary)
+        ok(summary, &payload)
     }
 
     #[tool(
         description = "Validate a player's expression against the dealt cards and target (exact arithmetic, server-side).",
+        output_schema = rmcp::handler::server::tool::schema_for_output::<SolveVerdict>(),
         annotations(title = "Check a solution", read_only_hint = true, destructive_hint = false, open_world_hint = false)
     )]
-    fn submit_solution(&self, Parameters(p): Parameters<SubmitParams>) -> Result<String, String> {
+    fn submit_solution(&self, Parameters(p): Parameters<SubmitParams>) -> Result<CallToolResult, String> {
         let id = p.puzzle_id.clone();
         self.with_session(&id, |session| {
             let cards = session.puzzle.cards.clone();
             let target = session.puzzle.target;
-            match evaluate(&cards, &p.expression) {
-                Ok(value) if value == target => Ok(format!(
-                    "accepted: {} = {target} — solved.",
-                    p.expression.trim()
-                )),
-                Ok(value) => Ok(format!(
-                    "valid expression but {} = {value}, not {target}. Keep going.",
-                    p.expression.trim()
-                )),
-                Err(err) => Ok(format!("rejected: {err}")),
-            }
+            let trimmed = p.expression.trim();
+            let verdict = match evaluate(&cards, trimmed) {
+                Ok(value) if value == target => SolveVerdict {
+                    accepted: true,
+                    value: Some(value.into()),
+                    reason: SolveReason::Accepted,
+                    message: format!("accepted: {trimmed} = {target} — solved."),
+                },
+                Ok(value) => SolveVerdict {
+                    accepted: false,
+                    value: Some(value.into()),
+                    reason: SolveReason::WrongTarget,
+                    message: format!("valid expression but {trimmed} = {value}, not {target}. Keep going."),
+                },
+                Err(err) => SolveVerdict {
+                    accepted: false,
+                    value: None,
+                    reason: SolveReason::InvalidExpression,
+                    message: format!("rejected: {err}"),
+                },
+            };
+            ok(verdict.message.clone(), &verdict)
         })
     }
 
     #[tool(
         description = "Progressive hint: 1 = which two cards, 2 = the operator, 3 = the sub-result, 4 = the full solution. Advances one level per call unless a level is given.",
+        output_schema = rmcp::handler::server::tool::schema_for_output::<HintPayload>(),
         annotations(title = "Give a hint", read_only_hint = true, destructive_hint = false, open_world_hint = false)
     )]
-    fn hint(&self, Parameters(p): Parameters<HintParams>) -> Result<String, String> {
+    fn hint(&self, Parameters(p): Parameters<HintParams>) -> Result<CallToolResult, String> {
         let id = p.puzzle_id.clone();
         self.with_session(&id, |session| {
             let level = Self::count_hints(session, p.level);
@@ -333,29 +499,39 @@ impl Snap24 {
                 .map(Rational::from)
                 .collect::<Vec<_>>();
             let target = session.puzzle.target;
-            let Some(step) = first_move(&board, target) else {
-                return Ok("No solution from here — call start_puzzle for a fresh deal.".into());
+            let hint = match first_move(&board, target) {
+                None => "No solution from here — call start_puzzle for a fresh deal.".to_string(),
+                Some(step) => match level {
+                    1 => format!("Hint {level} — combine {} and {}.", step.left, step.right),
+                    2 => format!("Hint {level} — use '{}' on {} and {}.", step.op, step.left, step.right),
+                    3 => format!(
+                        "Hint {level} — {} {} {} = {}",
+                        step.left, step.op, step.right, step.result
+                    ),
+                    _ => {
+                        let steps = move_sequence(&board, target);
+                        format!(
+                            "Hint {level} — full solution: {}",
+                            steps.iter().map(move_line).collect::<Vec<_>>().join(" ; ")
+                        )
+                    }
+                },
             };
-            Ok(match level {
-                1 => format!("Hint 1 — combine {} and {}.", step.left, step.right),
-                2 => format!("Hint 2 — use '{}' on {} and {}.", step.op, step.left, step.right),
-                3 => format!("Hint 3 — {} {} {} = {}", step.left, step.op, step.right, step.result),
-                _ => {
-                    let steps = move_sequence(&board, target);
-                    format!(
-                        "Hint 4 — full solution: {}",
-                        steps.iter().map(move_line).collect::<Vec<_>>().join(" ; ")
-                    )
-                }
-            })
+            let payload = HintPayload {
+                level,
+                next_level: (level + 1).min(4),
+                hint: hint.clone(),
+            };
+            ok(hint, &payload)
         })
     }
 
     #[tool(
         description = "List distinct solutions for the current puzzle (canonical, de-duplicated).",
+        output_schema = rmcp::handler::server::tool::schema_for_output::<RevealPayload>(),
         annotations(title = "Reveal solutions", read_only_hint = true, destructive_hint = false, open_world_hint = false)
     )]
-    fn reveal(&self, Parameters(p): Parameters<IdParams>) -> Result<String, String> {
+    fn reveal(&self, Parameters(p): Parameters<IdParams>) -> Result<CallToolResult, String> {
         let id = p.puzzle_id.clone();
         self.with_session(&id, |session| {
             let board = session
@@ -367,24 +543,35 @@ impl Snap24 {
                 .collect::<Vec<_>>();
             let target = session.puzzle.target;
             let all = solutions_infix(&board, target);
-            if all.is_empty() {
-                return Ok("No solutions — this hand can't reach the target.".into());
-            }
-            let shown = all.iter().take(REVEAL_LIMIT).cloned().collect::<Vec<_>>().join(" ; ");
-            let more = all.len().saturating_sub(REVEAL_LIMIT);
-            Ok(if more > 0 {
-                format!("{} solutions (showing {REVEAL_LIMIT}, +{more} more): {shown}", all.len())
+            let solutions: Vec<String> = all.iter().take(REVEAL_LIMIT).cloned().collect();
+            let count = all.len();
+            let shown = solutions.len();
+            let more = count.saturating_sub(shown);
+            let listed = solutions.join(" ; ");
+            let message = if count == 0 {
+                "No solutions — this hand can't reach the target.".to_string()
+            } else if more > 0 {
+                format!("{count} solutions (showing {shown}, +{more} more): {listed}")
             } else {
-                format!("{} solutions: {shown}", all.len())
-            })
+                format!("{count} solutions: {listed}")
+            };
+            let payload = RevealPayload {
+                count,
+                shown,
+                truncated: more > 0,
+                solutions,
+                message: message.clone(),
+            };
+            ok(message, &payload)
         })
     }
 
     #[tool(
         description = "Explain a solution step by step in words (uses the player's expression if given, otherwise one solution).",
+        output_schema = rmcp::handler::server::tool::schema_for_output::<ExplainPayload>(),
         annotations(title = "Explain a solution", read_only_hint = true, destructive_hint = false, open_world_hint = false)
     )]
-    fn explain(&self, Parameters(p): Parameters<ExplainParams>) -> Result<String, String> {
+    fn explain(&self, Parameters(p): Parameters<ExplainParams>) -> Result<CallToolResult, String> {
         let id = p.puzzle_id.clone();
         self.with_session(&id, |session| {
             let cards = session.puzzle.cards.clone();
@@ -392,7 +579,7 @@ impl Snap24 {
             let target = session.puzzle.target;
 
             if let Some(expr) = p.expression.as_deref() {
-                return Ok(match evaluate(&cards, expr) {
+                let message = match evaluate(&cards, expr) {
                     Ok(value) if value == target => format!(
                         "'{}' uses every card once and equals {target}. ({} cards from {}.)",
                         expr.trim(),
@@ -401,15 +588,26 @@ impl Snap24 {
                     ),
                     Ok(value) => format!("'{}' evaluates to {value}, not {target}.", expr.trim()),
                     Err(err) => format!("Can't explain '{}': {err}", expr.trim()),
-                });
+                };
+                let payload = ExplainPayload {
+                    expression: Some(expr.trim().to_string()),
+                    steps: Vec::new(),
+                    message: message.clone(),
+                };
+                return ok(message, &payload);
             }
 
             let steps = move_sequence(&board, target);
             if steps.is_empty() {
-                return Ok("No solution to explain for this hand.".into());
+                let payload = ExplainPayload {
+                    expression: None,
+                    steps: Vec::new(),
+                    message: "No solution to explain for this hand.".to_string(),
+                };
+                return ok(payload.message.clone(), &payload);
             }
             let lines = steps.iter().map(move_line).collect::<Vec<_>>();
-            Ok(format!(
+            let message = format!(
                 "One way to reach {target} with {}:\n  1. start with {}\n  {}\nCombine the two left-over values last.",
                 cards.len(),
                 card_list(&cards),
@@ -419,28 +617,33 @@ impl Snap24 {
                     .map(|(i, l)| format!("{}. {l}", i + 2))
                     .collect::<Vec<_>>()
                     .join("\n  ")
-            ))
+            );
+            let payload = ExplainPayload {
+                expression: None,
+                steps: lines.iter().map(|l| format!("{l} = {target}")).collect(),
+                message: message.clone(),
+            };
+            ok(message, &payload)
         })
     }
 
     #[tool(
-        description = "Render the Snap 24 board widget. Deal with start_puzzle first, then pass its puzzle_id here to show the interactive board.",
+        description = "Show the interactive Snap 24 board for a puzzle (re-shows it after start_puzzle, or to bring the board back).",
         meta = tool_meta(),
+        output_schema = rmcp::handler::server::tool::schema_for_output::<BoardPayload>(),
         annotations(title = "Show the board", read_only_hint = true, destructive_hint = false, open_world_hint = false)
     )]
-    fn render_board(&self, Parameters(p): Parameters<IdParams>) -> Result<Json<BoardView>, String> {
+    fn render_board(&self, Parameters(p): Parameters<IdParams>) -> Result<CallToolResult, String> {
         let id = p.puzzle_id.clone();
         self.with_session(&id, |session| {
-            let (n, d) = session.puzzle.target.parts();
-            Ok(Json(BoardView {
-                puzzle_id: id.clone(),
-                mode: session.puzzle.mode.label().to_string(),
-                difficulty: session.puzzle.difficulty.label().to_string(),
-                cards: session.puzzle.cards.clone(),
-                target_n: n,
-                target_d: d,
-                view_seconds: session.puzzle.difficulty.view_seconds(),
-            }))
+            let payload = board_payload(&id, &session.puzzle);
+            let message = format!(
+                "Board: {} cards {} → {}. Pass puzzle_id to submit_solution, hint, reveal or explain.",
+                payload.cards.len(),
+                card_list(&payload.cards),
+                payload.target.n
+            );
+            ok(message, &payload)
         })
     }
 }
@@ -454,12 +657,15 @@ impl ServerHandler for Snap24 {
                 .enable_resources()
                 .build(),
         )
+        .with_server_info(Implementation::new("snap24", env!("CARGO_PKG_VERSION")))
         .with_instructions(
             "Snap 24: the 24 game. You deal a hand with start_puzzle, the player combines every \
              card exactly once with + - * / to reach the target, and submit_solution checks it \
              with exact arithmetic. Use hint for progressive help, reveal for the solution set \
              and explain to walk through one. Cards are ranks; A=1, J=11, Q=12, K=13. Targets \
-             and sub-results can be fractions.",
+             and sub-results can be fractions. start_puzzle and render_board both open the \
+             interactive board, so the player can tap cards themselves; call render_board again \
+             to bring the board back, and prefer its puzzle_id for every follow-up call.",
         )
     }
 
