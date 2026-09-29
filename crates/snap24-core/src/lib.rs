@@ -399,9 +399,9 @@ pub fn reachable_values(cards: &[Rational]) -> BTreeSet<Rational> {
         if mask.count_ones() < 2 {
             continue;
         }
-        // `mask.isolate_lowest_one()` needs a newer std than some distro toolchains
-        // ship, so use the portable bit trick.
-        let low = mask & mask.wrapping_neg();
+        // The lowest set bit. Spelled out because `isolate_lowest_one()` needs a
+        // newer std than some distro toolchains ship.
+        let low = 1usize << mask.trailing_zeros();
         let mut values = HashSet::new();
         let mut sub = (mask - 1) & mask;
         while sub > 0 {
@@ -466,9 +466,9 @@ fn solve_exprs(cards: &[Rational], target: Rational) -> Vec<ExprRef> {
         if mask.count_ones() < 2 {
             continue;
         }
-        // `mask.isolate_lowest_one()` needs a newer std than some distro toolchains
-        // ship, so use the portable bit trick.
-        let low = mask & mask.wrapping_neg();
+        // The lowest set bit. Spelled out because `isolate_lowest_one()` needs a
+        // newer std than some distro toolchains ship.
+        let low = 1usize << mask.trailing_zeros();
         let mut acc: HashMap<Rational, HashSet<ExprRef>> = HashMap::new();
         let mut sub = (mask - 1) & mask;
         while sub > 0 {
