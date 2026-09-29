@@ -238,6 +238,17 @@ fn the_surface_matches_the_published_contract() {
     for key in ["expression", "steps", "message"] {
         assert!(explain["structuredContent"].get(key).is_some(), "ExplainPayload needs {key}");
     }
+    let steps = explain["structuredContent"]["steps"].as_array().unwrap();
+    assert!(!steps.is_empty(), "explain should walk through moves: {explain}");
+    assert_eq!(
+        steps.iter().filter(|s| s.as_str().unwrap_or_default().matches(" = ").count() != 1).count(),
+        0,
+        "each step is exactly one move: {steps:?}"
+    );
+    assert!(
+        steps.last().unwrap().as_str().unwrap_or_default().ends_with(" = 24"),
+        "the last move lands on the target: {steps:?}"
+    );
 
     // Unknown ids stay a friendly tool error rather than a protocol error.
     let missing = server.call("reveal", json!({"puzzle_id": "nope"}));

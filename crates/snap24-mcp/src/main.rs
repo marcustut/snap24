@@ -620,7 +620,8 @@ impl Snap24 {
             );
             let payload = ExplainPayload {
                 expression: None,
-                steps: lines.iter().map(|l| format!("{l} = {target}")).collect(),
+                // Each move already reads "8 * 3 = 24"; the last one lands on the target.
+                steps: lines.clone(),
                 message: message.clone(),
             };
             ok(message, &payload)
