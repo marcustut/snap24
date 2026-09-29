@@ -78,14 +78,42 @@ node crates/snap24-mcp/tests/host_sim.mjs
 If Playwright isn't resolvable from the repo, point at it:
 `PLAYWRIGHT=/path/to/playwright/index.mjs node crates/snap24-mcp/tests/host_sim.mjs`.
 
+## Deploy (NixOS)
+
+Live at **`https://snap24.marcustut.me/mcp`** (streamable HTTP, behind nginx with
+an ACME cert on `marcus-server`).
+
+The repo ships a flake + NixOS module, so a host only needs:
+
+```nix
+# flake.nix
+inputs.snap24.url = "git+ssh://git@github.com/marcustut/snap24";
+
+# the host's extraModules
+inputs.snap24.nixosModules.default
+
+# hosts/<host>/snap24.nix
+services.snap24-mcp = {
+  enable = true;
+  domain = "snap24.marcustut.me";
+};
+```
+
+That builds the server from this repo (workspace-aware: only `-p snap24-mcp` is
+compiled, so the Bevy app's GPU/X11 dependencies stay out of the closure), runs
+it under systemd on `127.0.0.1:8788` with `DynamicUser` and hardening turned on,
+and adds an nginx `location /mcp` with `proxy_buffering off` — MCP answers over
+SSE, so buffered responses would hang.
+
+`domain` also feeds `SNAP24_MCP_ALLOWED_HOSTS`: rmcp only accepts loopback
+`Host` headers by default, so a public deployment that forgets it answers `403`.
+
 ## Testing it in ChatGPT (dev mode)
 
 This is the part that needs your OpenAI account and a reachable server:
 
-1. **Deploy over streamable HTTP.** ChatGPT needs a remote HTTPS endpoint; stdio
-   is for local tools/Codex. Run with `--http` (above) and put it behind TLS —
-   `snap24.marcustut.me` is the natural host. Remember
-   `SNAP24_MCP_ALLOWED_HOSTS=<your public host>`.
+1. **Deploy over streamable HTTP** — done: `https://snap24.marcustut.me/mcp`
+   (see "Deploy (NixOS)" above).
 2. In ChatGPT, enable **Developer mode** and add the MCP server URL as a
    connector.
 3. Ask it to *"play Snap 24"* → it calls `start_puzzle` then `render_board`, and
