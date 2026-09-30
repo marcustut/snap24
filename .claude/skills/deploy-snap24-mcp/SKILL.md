@@ -115,6 +115,14 @@ Use port **8899**: `8787` is taken on this Mac by `collie`.
 - `SNAP24_MCP_ALLOWED_HOSTS` must contain the public host — rmcp only accepts
   loopback `Host` headers by default and otherwise answers **403**. The module
   sets it from `domain`.
+- `nginx` is **not on root's PATH** on the box, so `nginx -T | grep …` silently
+  returns nothing. Read the active config instead:
+  `systemctl cat nginx.service | grep -o "/nix/store/[^ ]*nginx.conf"` then grep
+  that file.
+- The `/mcp` location is rate limited (120r/m per IP, burst 60 → `429`). It is
+  generous on purpose: hosts share egress IPs. Test it from the box over
+  **HTTPS on loopback** (`--resolve snap24.marcustut.me:443:127.0.0.1`), since
+  plain HTTP just redirects and never reaches the location.
 - **`/etc/nixos` often has uncommitted changes** (sops re-encryption, other
   hosts). A local-path flake builds the *working tree*, so a rebuild applies
   them. Commit only the files you changed, and never touch or print anything

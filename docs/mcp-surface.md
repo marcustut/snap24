@@ -125,6 +125,11 @@ round-trips only `hint`, `reveal`, `start_puzzle` and the final
   Ids do not survive a redeploy: after a deploy the model must deal again.
 - The endpoint is unauthenticated and shared; ids are random, and a puzzle is
   refused when it has expired.
+- The deployment rate limits the endpoint at **120 requests/minute per client IP**
+  (burst 60, then `429`). It is deliberately generous because hosts call from
+  shared egress addresses, so one player's traffic must not throttle another's.
+- Hands are equally fine to re-deal at any time: nothing is charged or scored
+  server-side.
 
 ## Known deliberate choices
 
