@@ -9,7 +9,13 @@
   },
   "homepage": "https://snap24.marcustut.me",
   "license": "MIT",
-  "keywords": ["game", "puzzle", "maths", "cards", "24"],
+  "keywords": [
+    "game",
+    "puzzle",
+    "maths",
+    "cards",
+    "24"
+  ],
   "extensions": {
     "com.openai": {
       "interface": {
@@ -50,28 +56,28 @@
               "expected_behavior": "A hand of five cards and the target 24 are shown, and the interactive board opens with those cards."
             },
             {
-              "description": "Reopen the board for the hand in play",
+              "description": "Bring the board back without changing the hand",
               "prompt": "Show me the board again",
               "tools_triggered": "render_board",
-              "expected_behavior": "The same hand is rendered again; the cards and target are unchanged."
+              "expected_behavior": "The same hand is rendered again; cards and target are unchanged from the deal."
             },
             {
-              "description": "Progressive hint",
-              "prompt": "Give me a hint",
+              "description": "Hint one level at a time",
+              "prompt": "Give me a hint on this hand",
               "tools_triggered": "hint",
-              "expected_behavior": "One hint at a time is given, starting with which two cards to combine, without revealing the whole solution."
+              "expected_behavior": "One hint is given, starting with which two cards to combine; asking again advances one level and stops at the full solution rather than skipping ahead."
             },
             {
-              "description": "Validate a correct solution",
-              "prompt": "Is (10 - 8) * 6 * 1 * 2 a solution?",
+              "description": "Reject an answer that reuses cards",
+              "prompt": "Check this answer for the hand you just dealt: 1 + 1",
               "tools_triggered": "submit_solution",
-              "expected_behavior": "The expression is evaluated with exact arithmetic against the dealt cards and the verdict says whether it reaches the target, using each card once."
+              "expected_behavior": "The answer is rejected with an explanation that those cards were not dealt, and no solution is claimed. The game continues."
             },
             {
-              "description": "Reveal and explain when stuck",
-              "prompt": "I'm stuck, show me the solution and explain it",
-              "tools_triggered": "reveal, explain",
-              "expected_behavior": "The distinct solutions are listed and one is walked through as ordered merge steps ending on the target."
+              "description": "Reveal a solution, then validate it",
+              "prompt": "I'm stuck. Show me a solution, then check that solution for me",
+              "tools_triggered": "reveal, submit_solution",
+              "expected_behavior": "One or more distinct solutions are listed with the true total, and the solution it checks is accepted, reporting the exact result equals 24."
             }
           ],
           "negative": [

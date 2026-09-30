@@ -97,9 +97,14 @@ in
         tryFiles = "$uri $uri.html $uri/index.html =404";
       };
 
+      # `alias`, not `root`: the URI prefix is stripped before the filesystem
+      # lookup, so /media/x.mp4 maps to ${cfg.mediaRoot}/x.mp4.
       locations."/media/" = {
-        root = cfg.mediaRoot;
-        extraConfig = "autoindex off;";
+        extraConfig = ''
+          alias ${cfg.mediaRoot}/;
+          autoindex off;
+          add_header Cache-Control "public, max-age=3600";
+        '';
       };
 
       locations."/mcp" = {
