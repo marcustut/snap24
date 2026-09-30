@@ -33,6 +33,21 @@ in
       description = "Loopback port the server listens on.";
     };
 
+    openaiChallengeToken = lib.mkOption {
+      type = lib.types.nullOr lib.types.str;
+      default = null;
+      description = ''
+        Token shown by the OpenAI plugin dashboard for domain verification. Served
+        verbatim as plain text at /.well-known/openai-apps-challenge.
+      '';
+    };
+
+    mediaRoot = lib.mkOption {
+      type = lib.types.path;
+      default = "/var/lib/snap24-media";
+      description = "Directory served at /media (demo recordings, large assets).";
+    };
+
     package = lib.mkOption {
       type = lib.types.package;
       default = self.packages.${pkgs.stdenv.hostPlatform.system}.snap24-mcp;
@@ -68,9 +83,24 @@ in
       };
     };
 
+    # Landing page and legal pages live in the repo's `site/` directory.
+    systemd.tmpfiles.rules = [
+      "d ${cfg.mediaRoot} 0755 root root -"
+    ];
+
     services.nginx.virtualHosts.${cfg.domain} = {
       forceSSL = true;
       enableACME = true;
+      root = "${self}/site";
+
+      locations."/" = {
+        tryFiles = "$uri $uri.html $uri/index.html =404";
+      };
+
+      locations."/media/" = {
+        root = cfg.mediaRoot;
+        extraConfig = "autoindex off;";
+      };
 
       locations."/mcp" = {
         proxyPass = "http://127.0.0.1:${toString cfg.port}";
@@ -82,6 +112,16 @@ in
           proxy_set_header Connection "";
           proxy_read_timeout 3600s;
           proxy_send_timeout 3600s;
+        '';
+      };
+    }
+    // lib.optionalAttrs (cfg.openaiChallengeToken != null) {
+      # Domain verification for the OpenAI plugin directory expects the exact
+      # token as plain text — nothing else on the page.
+      locations."/.well-known/openai-apps-challenge" = {
+        extraConfig = ''
+          default_type text/plain;
+          return 200 "${cfg.openaiChallengeToken}";
         '';
       };
     };

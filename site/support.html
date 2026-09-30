@@ -1,0 +1,56 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Support — Snap 24</title>
+<style>
+  :root { color-scheme: dark; }
+  html { background: radial-gradient(120% 90% at 50% 0%, #191410 0%, #0f0c0a 70%); }
+  body { margin: 0; min-height: 100vh; color: #f3ece0; font: 16px/1.7 ui-sans-serif, system-ui, -apple-system, Segoe UI, sans-serif; }
+  main { max-width: 44rem; margin: 0 auto; padding: 4rem 1.5rem 6rem; }
+  h1 { font: 600 clamp(1.9rem, 5vw, 2.6rem)/1.15 "Fraunces", Georgia, serif; margin: 0 0 .4rem; }
+  h2 { font: 600 1rem/1.4 "Fraunces", Georgia, serif; letter-spacing: .14em; text-transform: uppercase; color: #c9a24a; margin: 2.4rem 0 .6rem; }
+  .lede { color: #d8cebc; }
+  dl { margin: 0; } dt { color: #e3c47e; margin-top: 1.1rem; font-weight: 600; } dd { margin: .2rem 0 0; }
+  code { font: 14px/1.5 ui-monospace, Menlo, monospace; background: #1c1713; border: 1px solid #2c241c; border-radius: 6px; padding: .1rem .35rem; color: #e3c47e; }
+  a { color: #e3c47e; text-decoration-color: #6b5630; text-underline-offset: 3px; }
+  footer { margin-top: 3.5rem; padding-top: 1.4rem; border-top: 1px solid #2c241c; color: #9c9182; font-size: .92rem; display: flex; gap: 1.4rem; flex-wrap: wrap; }
+</style>
+</head>
+<body>
+<main>
+  <h1>Support</h1>
+  <p class="lede">Playing Snap 24 with ChatGPT. Most questions are answered below; anything else, get in touch.</p>
+
+  <h2>How to play</h2>
+  <p>Ask for a hand ("deal me a Snap 24 hand"), then combine <strong>every</strong> card exactly once with <code>+ - * /</code> to reach the target. Tap two cards and an operator on the board to merge them. Ask for a hint if you are stuck, or say your answer out loud to have it checked. A=1, J=11, Q=12, K=13, and fractions are allowed at every step.</p>
+
+  <h2>Common questions</h2>
+  <dl>
+    <dt>The cards disappeared mid-game</dt>
+    <dd>That is the challenge, not a bug: from Medium upward the hand hides after a few seconds. Higher tiers hide it sooner, and Blind never shows it at all.</dd>
+
+    <dt>"Unknown or expired puzzle id"</dt>
+    <dd>A hand lives in memory for 30 minutes, and a server update clears hands too. Ask for a new deal, or say "show me the board again" to bring back the current one.</dd>
+
+    <dt>My answer was rejected even though it equals 24</dt>
+    <dd>Every card must be used exactly once. Reusing or skipping a card is rejected, and the reason says which cards were expected.</dd>
+
+    <dt>The board closed or scrolled away</dt>
+    <dd>Say "show me the board again" and it comes back with the same hand. On ChatGPT you can also pop the board out so it stays visible while you type.</dd>
+
+    <dt>Why does it say there are hundreds of solutions?</dt>
+    <dd>Most hands can be solved many ways. The reveal lists a handful and gives the true total.</dd>
+  </dl>
+
+  <h2>Report a problem</h2>
+  <p>Email <a href="mailto:support@marcustut.me">support@marcustut.me</a> with what you asked for, what you expected, and what happened. Say the word "bug" or "support" so it is not mistaken for a game request. You can also reach the developer at <a href="https://github.com/marcustut" rel="noopener">github.com/marcustut</a>.</p>
+  <p>Snap 24 is a small project: replies usually arrive within a few days.</p>
+
+  <footer>
+    <a href="/">Home</a> <a href="/privacy">Privacy</a> <a href="/terms">Terms</a>
+  </footer>
+</main>
+</body>
+</html>

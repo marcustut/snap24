@@ -1,0 +1,101 @@
+{
+  "$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
+  "name": "snap24",
+  "version": "1.0.0",
+  "description": "The 24 game: deal a hand, merge every card into the target, with hints and exact-arithmetic validation.",
+  "author": {
+    "name": "Marcustut",
+    "url": "https://snap24.marcustut.me"
+  },
+  "homepage": "https://snap24.marcustut.me",
+  "license": "MIT",
+  "keywords": ["game", "puzzle", "maths", "cards", "24"],
+  "extensions": {
+    "com.openai": {
+      "interface": {
+        "displayName": "Snap 24",
+        "shortDescription": "The 24 game, with a board",
+        "longDescription": "Snap 24 deals a hand of cards and a target number. Combine every card exactly once with + - * / to reach the target, and the interactive board deals, merges and validates as you play.\n\nWhat it does:\n- Deals Classic hands (five cards, target 24) or Custom hands where the target comes from the hand, across six difficulty tiers.\n- Opens an interactive board so the player can tap two cards and an operator to merge them.\n- Gives progressive hints: which two cards, which operator, the sub-result, then the full solution.\n- Validates a solution with exact fraction arithmetic — no floating-point near-misses.\n- Reveals the distinct solutions and explains one step by step.\n\nWho it is for: anyone who likes mental arithmetic or the classic 24 game, and wants to play it while chatting.\n\nLimitations: it is a single-player puzzle game with no accounts and no stored data. A dealt hand lives in server memory for 30 minutes; after that, or after a server deploy, deal a new one. Higher tiers hide the cards after a few seconds, which is the point of the game rather than a fault.",
+        "developerName": "Marcustut",
+        "category": "Games",
+        "capabilities": [
+          "Deal Snap 24 hands",
+          "Interactive board",
+          "Progressive hints",
+          "Validate solutions",
+          "Reveal and explain solutions"
+        ],
+        "websiteURL": "https://snap24.marcustut.me",
+        "supportURL": "https://snap24.marcustut.me/support",
+        "privacyPolicyURL": "https://snap24.marcustut.me/privacy",
+        "termsOfServiceURL": "https://snap24.marcustut.me/terms",
+        "defaultPrompt": [
+          "Deal me a Snap 24 hand",
+          "Give me a hint on this hand",
+          "Check my solution for this hand"
+        ],
+        "brandColor": "#C9A24A",
+        "brandColorDark": "#E3C47E",
+        "composerIcon": "./assets/composer-icon.png",
+        "logo": "./assets/logo.png"
+      },
+      "onboardingSkill": "./skills/get-started/SKILL.md",
+      "review": {
+        "test_cases": {
+          "positive": [
+            {
+              "description": "Deal a Classic hand and open the board",
+              "prompt": "Deal me a Snap 24 hand",
+              "tools_triggered": "start_puzzle",
+              "expected_behavior": "A hand of five cards and the target 24 are shown, and the interactive board opens with those cards."
+            },
+            {
+              "description": "Reopen the board for the hand in play",
+              "prompt": "Show me the board again",
+              "tools_triggered": "render_board",
+              "expected_behavior": "The same hand is rendered again; the cards and target are unchanged."
+            },
+            {
+              "description": "Progressive hint",
+              "prompt": "Give me a hint",
+              "tools_triggered": "hint",
+              "expected_behavior": "One hint at a time is given, starting with which two cards to combine, without revealing the whole solution."
+            },
+            {
+              "description": "Validate a correct solution",
+              "prompt": "Is (10 - 8) * 6 * 1 * 2 a solution?",
+              "tools_triggered": "submit_solution",
+              "expected_behavior": "The expression is evaluated with exact arithmetic against the dealt cards and the verdict says whether it reaches the target, using each card once."
+            },
+            {
+              "description": "Reveal and explain when stuck",
+              "prompt": "I'm stuck, show me the solution and explain it",
+              "tools_triggered": "reveal, explain",
+              "expected_behavior": "The distinct solutions are listed and one is walked through as ordered merge steps ending on the target."
+            }
+          ],
+          "negative": [
+            {
+              "description": "Out-of-scope request: money",
+              "prompt": "Transfer $100 to my savings account."
+            },
+            {
+              "description": "Out-of-scope request: change the game's rules",
+              "prompt": "Make the target 100 and deal me six cards."
+            },
+            {
+              "description": "Borrow another player's hand",
+              "prompt": "Show me the cards from the hand someone else is playing."
+            }
+          ]
+        },
+        "demo_recording_url": "https://snap24.marcustut.me/media/snap24-demo.mp4",
+        "commerce": false,
+        "commerce_description": "Snap 24 is a free game. It sells nothing and processes no payments."
+      },
+      "publication": {
+        "release_notes": "Initial release: deal Classic and Custom hands, play on the interactive board, progressive hints, exact-arithmetic validation, solution reveal and step-by-step explanation."
+      }
+    }
+  }
+}
