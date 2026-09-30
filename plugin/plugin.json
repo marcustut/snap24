@@ -43,7 +43,11 @@
         "brandColor": "#C9A24A",
         "brandColorDark": "#E3C47E",
         "composerIcon": "./assets/composer-icon.png",
-        "logo": "./assets/logo.png"
+        "logo": "./assets/logo.png",
+        "screenshots": [
+          "./assets/screenshot-board.png",
+          "./assets/screenshot-solved.png"
+        ]
       },
       "onboardingSkill": "./skills/get-started/SKILL.md",
       "review": {

@@ -113,6 +113,25 @@ SSE, so buffered responses would hang.
 `domain` also feeds `SNAP24_MCP_ALLOWED_HOSTS`: rmcp only accepts loopback
 `Host` headers by default, so a public deployment that forgets it answers `403`.
 
+## Publishing to the plugin directory
+
+`plugin/` holds the uploadable package (manifest, MCP declaration, onboarding
+skill, icons, screenshots) and the checklist lives in
+`../../.scratch/snap24-plugin/issues/17-submission-prep.md`. Two things that
+matter on the server side:
+
+- the listing's four URLs (`/`, `/support`, `/privacy`, `/terms`) and the demo
+  recording at `/media/` are served by the NixOS module from `site/` and
+  `services.snap24-mcp.mediaRoot`;
+- OpenAI verifies the domain by fetching
+  `https://<domain>/.well-known/openai-apps-challenge`; set
+  `services.snap24-mcp.openaiChallengeToken` to the token their dashboard shows
+  and redeploy.
+
+`crates/snap24-mcp/tests/record_demo.mjs` records the demo (and the listing
+screenshots) against the deployed server, bridging `tools/call` to HTTPS the way
+a host does.
+
 ## Testing it in ChatGPT (dev mode)
 
 This is the part that needs your OpenAI account and a reachable server:
