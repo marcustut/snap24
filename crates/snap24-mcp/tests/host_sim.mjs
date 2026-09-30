@@ -152,6 +152,37 @@ check("board renders the target from the tool result", (await text("#target")) =
 // 2. Timer is running (Medium) and the hide mechanic exists.
 check("countdown is visible", /hiding in/i.test(await text("#timer")), await text("#timer"));
 
+// 2b. Every view mode: Blind hides from the start, Easy never hides, Medium counts down.
+// (Easy reports view_seconds: null, which a naive Number() coercion reads as 0 = hidden.)
+async function showRound(difficulty) {
+  const round = await mcp.tool("start_puzzle", { mode: "classic", difficulty, seed: 9 });
+  const id = /puzzle_id:\s*(\S+)/.exec(round.text)?.[1];
+  const payload = (await mcp.tool("render_board", { puzzle_id: id })).result.structuredContent;
+  await page.evaluate((v) => {
+    const w = document.getElementById("w").contentWindow;
+    w.postMessage({ jsonrpc: "2.0", method: "ui/notifications/tool-result", params: { structuredContent: v } }, "*");
+  }, payload);
+  await widget.locator(".card").first().waitFor();
+  await page.waitForTimeout(200);
+  return payload;
+}
+
+const blind = await showRound("blind");
+check("blind: view_seconds is 0", blind.view_seconds === 0, JSON.stringify(blind.view_seconds));
+const blindRanks = await widget.locator(".card .rank").allInnerTexts();
+check("blind: every card is face down", blindRanks.length > 0 && blindRanks.every((r) => r === "?"), blindRanks.join(" "));
+check("blind: no countdown", (await text("#timer")) === "", await text("#timer"));
+
+const easy = await showRound("easy");
+check("easy: view_seconds is null", easy.view_seconds === null, JSON.stringify(easy.view_seconds));
+const easyRanks = await widget.locator(".card .rank").allInnerTexts();
+check("easy: cards are face up", easyRanks.length > 0 && easyRanks.every((r) => r !== "?"), easyRanks.join(" "));
+check("easy: no countdown", (await text("#timer")) === "", await text("#timer"));
+
+// Back to a Medium hand for the rest of the run.
+await showRound("medium");
+await page.waitForTimeout(200);
+
 // 3. Taps merge locally: two cards + an operator shrink the hand.
 const before = await widget.locator(".card").count();
 await widget.locator(".card").nth(0).click();

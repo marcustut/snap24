@@ -162,7 +162,9 @@
     // be submitted to the server for validation.
     S.cards = (view.cards || []).map((v) => {
       const value = rat(Number(v) || 0);
-      return { v: value, revealed: Number(view.view_seconds) !== 0, token: false, expr: String(value.n) };
+      // Only Blind (0) starts face down. `null` means visible indefinitely, and
+      // Number(null) is 0 — coercing here hid the whole hand on Easy.
+      return { v: value, revealed: view.view_seconds !== 0, token: false, expr: String(value.n) };
     });
     S.sel = []; S.op = null; S.phase = "playing"; S.history = [];
     S.view = view.view_seconds;
