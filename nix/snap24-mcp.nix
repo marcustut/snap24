@@ -57,6 +57,17 @@ in
   };
 
   config = lib.mkIf cfg.enable {
+    # Flood protection for a public, unauthenticated endpoint.
+    #
+    # The rate is deliberately generous: hosts (ChatGPT, Codex) call from shared
+    # egress addresses, so a per-IP limit that suits one player would throttle
+    # everybody behind the same address. 120r/m with a 60-request burst is many
+    # times what a real session uses while still stopping a runaway loop.
+    services.nginx.appendHttpConfig = ''
+      limit_req_zone $binary_remote_addr zone=snap24_mcp:10m rate=120r/m;
+      limit_req_status 429;
+    '';
+
     systemd.services.snap24-mcp = {
       description = "Snap 24 MCP server";
       wantedBy = [ "multi-user.target" ];
@@ -110,6 +121,8 @@ in
       locations."/mcp" = {
         proxyPass = "http://127.0.0.1:${toString cfg.port}";
         extraConfig = ''
+          limit_req zone=snap24_mcp burst=60 nodelay;
+
           # MCP answers over SSE, so the response must stream through.
           proxy_buffering off;
           proxy_cache off;

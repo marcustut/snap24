@@ -5,4 +5,4 @@ members = ["crates/snap24-core", "crates/snap24-app", "crates/snap24-mcp"]
 [workspace.package]
 version = "0.1.0"
 edition = "2024"
-license = "MIT OR Apache-2.0"
+license = "MIT"
