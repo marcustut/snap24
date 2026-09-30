@@ -16,15 +16,24 @@ manual steps on the box beyond `nixos-rebuild`.
 | Public IP / tailnet | `54.254.97.240` / `100.64.0.25` |
 | SSH | `ssh marcustut/marcus-server` (alias → user `root`) |
 | Unit / port | `snap24-mcp.service`, loopback `127.0.0.1:8788` |
-| App repo | `github.com/marcustut/snap24` (private) — `flake.nix`, `nix/snap24-mcp.nix` |
+| App repo | `github.com/marcustut/snap24` (public) — `flake.nix`, `nix/snap24-mcp.nix` |
 | Infra repo | `/etc/nixos` on the box (git, flake, host `server`) |
 | TLS | ACME cert at `/var/lib/acme/snap24.marcustut.me/` |
 
 ## Access
 
-Root's GitHub key is passphrase-protected but already loaded in the box's
-ssh-agent. Non-interactive SSH has no `SSH_AUTH_SOCK`, so nix can't fetch the
-private flake inputs until you export one:
+`ssh marcustut/marcus-server` connects over the box's **public** IP, which is
+occasionally lossy. When it times out, use the tailnet address instead — same
+machine, verified by host key:
+
+```sh
+ssh root@100.64.0.25            # tailnet; check `ssh-keyscan` fingerprint matches
+```
+
+The snap24 input is public, so nix needs no credentials for it. The *other*
+inputs (`axis`, `puchong`, `nixos`) are still private `git+ssh://` flake inputs,
+and root's GitHub key is passphrase-protected but loaded in the box's ssh-agent —
+so export a socket for those:
 
 ```sh
 SOCK=$(ssh marcustut/marcus-server 'ls -t /root/.ssh/agent/* | head -1')
@@ -58,7 +67,7 @@ Three edits, matching how `axis` and `puchong` are wired:
 
 ```nix
 # /etc/nixos/flake.nix — input
-snap24.url = "git+ssh://git@github.com/marcustut/snap24";
+snap24.url = "github:marcustut/snap24";
 
 # /etc/nixos/flake.nix — the `server` host's extraModules
 inputs.snap24.nixosModules.default
@@ -101,10 +110,11 @@ Use port **8899**: `8787` is taken on this Mac by `collie`.
 
 ## Gotchas that have bitten us
 
-- **`git+ssh://git@github.com/marcustut/snap24`** — a *slash* after the host.
-  The scp-style colon (`github.com:marcustut/...`) is not parseable in the
-  `scheme://` form and nix silently falls back to treating the ref as a local
-  path (`getting status of "/root/git+ssh:/..."`).
+- **`git+ssh://` refs need a *slash* after the host.** The scp-style colon
+  (`git+ssh://git@github.com:marcustut/repo`) is not parseable in the `scheme://`
+  form and nix silently falls back to treating the ref as a local path
+  (`getting status of "/root/git+ssh:/..."`). Only matters for the private
+  inputs; snap24 itself is public now.
 - **Don't pass `?rev=` in a flake ref** — likewise parses as a path. Move the
   input with `nix flake update snap24` instead.
 - The box's rustc is **older than dev machines**: avoid freshly-stabilised std

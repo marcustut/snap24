@@ -92,7 +92,7 @@ The repo ships a flake + NixOS module, so a host only needs:
 
 ```nix
 # flake.nix
-inputs.snap24.url = "git+ssh://git@github.com/marcustut/snap24";
+inputs.snap24.url = "github:marcustut/snap24";
 
 # the host's extraModules
 inputs.snap24.nixosModules.default

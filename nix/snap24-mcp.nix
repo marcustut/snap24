@@ -1,7 +1,7 @@
 # NixOS module for the Snap 24 MCP server, served over streamable HTTP behind
 # nginx with an ACME certificate.
 #
-#   inputs.snap24.url = "git+ssh://git@github.com/marcustut/snap24";
+#   inputs.snap24.url = "github:marcustut/snap24";
 #   # ...
 #   services.snap24-mcp = {
 #     enable = true;

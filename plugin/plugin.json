@@ -107,5 +107,6 @@
         "release_notes": "Initial release: deal Classic and Custom hands, play on the interactive board, progressive hints, exact-arithmetic validation, solution reveal and step-by-step explanation."
       }
     }
-  }
+  },
+  "repository": "https://github.com/marcustut/snap24"
 }

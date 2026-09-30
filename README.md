@@ -62,7 +62,7 @@ runs it under systemd on `127.0.0.1:8788`, serves the listing pages and demo
 media, and puts nginx in front with an ACME certificate.
 
 ```nix
-inputs.snap24.url = "git+ssh://git@github.com/marcustut/snap24";
+inputs.snap24.url = "github:marcustut/snap24";
 # host: inputs.snap24.nixosModules.default
 services.snap24-mcp = { enable = true; domain = "snap24.marcustut.me"; };
 ```
